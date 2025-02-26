@@ -102,6 +102,7 @@ struct control_parameters {
     int64_t   scftype;
     char      runtype[20];
     int64_t   guess;
+    int64_t   active_basis;
     int64_t   maxit;
     int64_t   maxit_dav;
     int64_t   maxit_zv;

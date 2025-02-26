@@ -132,6 +132,13 @@ class BasisData:
                 break
             basis_tags.append(parts[4])
 
+        if self.mol.config["basis_set"]["alt_basis"][0:4] != 'load' and self.mol.config["guess"]["type"] == "db":
+            self.basis_names = self.mol.config["basis_set"]["alt_basis"].split(',')
+            if len(self.basis_names) == 1:
+                self.basis_names = [self.basis_names[0]] * self.num_atoms
+            self.mol.config["basis_set"]["alt_basis"] = 'load' + self.mol.config["basis_set"]['alt_basis']
+            return self.basis_names
+
         if basis_tags:
             basis_list_str = self.mol.config["basis_set"]["library"].strip()
             if basis_list_str:

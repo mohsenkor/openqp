@@ -186,6 +186,7 @@ OQP_CONFIG_SCHEMA = {
     },
     'basis_set':{
         'library': {'type': str, 'default': ''},
+        'alt_basis': {'type':str, 'default': 'load'}
         },
     'tests': {
         'exception': {'type': bool, 'default': False},
@@ -199,7 +200,7 @@ class OQPData:
     """Wrapper for OQP data class"""
 
     _scftypes = {"rhf": 1, "uhf": 2, "rohf": 3}
-    _guesses = {"huckel": 1, "hcore": 2}
+    _guesses = {"huckel": 1, "hcore": 2, "db": 3}
     _dft_switch = {False: 10, True: 20}
     _methods = ('hf', 'tdhf')
     _td_types = ('rpa', 'tda', 'sf', 'mrsf')
@@ -351,6 +352,9 @@ class OQPData:
 
         if key in dir(self._data.mol_prop):
             self._data.mol_prop[key] = value
+
+        if key in dir(self._data.control):
+            setattr(self._data.control, key, value)
 
         if key in dir(self._data.mol_energy):
             self._data.mol_energy[key] = value

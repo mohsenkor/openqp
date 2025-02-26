@@ -178,13 +178,13 @@ contains
         print *, "----------------------"
     end subroutine print_all_shells
 
-    subroutine map_shell2basis_set(infos, basis)
+    subroutine map_shell2basis_set(infos)
         use basis_tools, only: basis_set
         use types, only: information
         use constants, only: NUM_CART_BF
 
-        type(information), intent(inout) :: infos
-        class(basis_set) ,intent(inout):: basis
+        type(information), target, intent(inout) :: infos
+        class(basis_set), pointer :: basis
         type(electron_shell), pointer :: temp
         type(electron_shell), pointer :: temp1
         integer :: nbf, nshell, nprim, mxcontr, mxam, ii
@@ -193,6 +193,8 @@ contains
         real, dimension(:), allocatable :: ex
 
         infos%control%basis_set_issue = .false.
+
+        basis => infos%basis
 
         temp => head
         mxam = 0

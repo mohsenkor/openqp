@@ -14,6 +14,19 @@ from oqp.library.libdlfind import DLFindMin, DLFindTS, DLFindMECI
 def prep_guess(mol):
     oqp.library.ints_1e(mol)
     oqp.library.guess(mol)
+    guess_type = mol.config["guess"]["type"]
+    if guess_type == "db":
+        SinglePoint(mol).energy()
+        mol.data["switch_basis"] = 0
+        oqp.library.set_basis(mol)
+        mol.data["switch_basis"] = 1
+        mol.config["basis_set"]["alt_basis"] = mol.config["basis_set"]["alt_basis"][4:]
+        oqp.library.set_basis(mol)
+        print("HOw it does not print any things")
+        oqp.project_basis(mol)
+        print("this is how")
+#        LastStep(mol).compute(mol)
+    exit()
 
 
 def compute_energy(mol):

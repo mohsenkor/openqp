@@ -5,7 +5,7 @@ import copy
 import oqp
 from oqp.utils.file_utils import try_basis
 from oqp.utils.file_utils import dump_log
-from oqp.library import set_basis
+from oqp.library.set_basis import set_basis
 
 def guess(mol):
     """Set up initial guess density"""
@@ -31,6 +31,9 @@ def guess(mol):
         beta = 'reloaded'
 
     elif guess_type == "db":
+        if mol.config["basis_set"]["alt_basis"][0:4] != "load":
+            mol.data["switch_basis"] = 0
+            set_basis(mol)
         hubas = try_basis("MINI_huckel", fallback=None)
         mol.data["OQP::hbasis_filename"] = hubas
         oqp.guess_huckel(mol)

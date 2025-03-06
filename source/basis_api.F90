@@ -147,6 +147,9 @@ contains
         new_node%exponents = expo_ptr
         new_node%coefficient = coef_ptr
         new_node%next => null()
+        if (info%elshell%id == 1) then
+            head => null()
+        end if
         if (.not. associated(head)) then
             head => new_node
         else
@@ -194,6 +197,7 @@ contains
 
         infos%control%basis_set_issue = .false.
 
+
         if (infos%control%active_basis == 0) then
             basis => infos%basis
         else
@@ -201,6 +205,9 @@ contains
         end if
 
         if (allocated(basis%ex)) call basis%destroy()
+
+        temp => null()
+        temp1 => null()
 
         temp => head
         mxam = 0
@@ -287,9 +294,13 @@ contains
         call basis%normalize_primitives()
 
         call head%clear()
+!        call temp%clear()
+!        call temp1%clear()
         nullify(head)
-        nullify(temp)
-        nullify(temp1)
+        temp => null()
+        temp1 => null()
+!        nullify(temp)
+!        nullify(temp1)
 
 
         if (ecp_head%element_id == 0) then
@@ -324,19 +335,17 @@ contains
         use basis_tools, only: basis_set
         use elements, only: ELEMENTS_SHORT_NAME
 
-
         type(information), target, intent(in) :: infos
         type(basis_set), pointer :: basis
         integer :: iw, i, j, atom, elem, end_i
         character(len=1) :: orbit
         character(len=1), dimension(5) :: orbital_types = ['S', 'P', 'D', 'F', 'G']
 
-        if (infos%control%active_basis == 0) then
-            basis => infos%basis
-        else
-            basis => infos%alt_basis
+        if (infos%control%active_basis == 1) then
+           return
         end if
 
+        basis => infos%basis
         open (newunit=iw, file=infos%log_filename, position="append")
 
         write(iw, '(/,5X,"====================== Basis Set Details ======================")')

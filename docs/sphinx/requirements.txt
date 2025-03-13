@@ -1,0 +1,4 @@
+sphinx>=6.0
+sphinx_rtd_theme>=1.0.0  # or furo, pydata-sphinx-theme
+numpy
+scipy

@@ -158,6 +158,7 @@ if(APPLE)
 endif()
 
 add_subdirectory(external)
+add_subdirectory(docs)
 
 add_definitions(-DOQP)
 add_subdirectory(source)

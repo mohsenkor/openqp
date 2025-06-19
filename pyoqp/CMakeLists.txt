@@ -104,3 +104,7 @@ INSTALL(
     DESTINATION share/basis_sets
     FILES_MATCHING PATTERN "*.basis"
 )
+install(
+    DIRECTORY ${CMAKE_SOURCE_DIR}/examples/
+    DESTINATION share/examples
+)

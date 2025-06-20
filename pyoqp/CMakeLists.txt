@@ -3,7 +3,7 @@ project(pyoqp)
 find_package(Python3
     REQUIRED
     COMPONENTS
-    Interpreter Development
+    #    Interpreter Development
 )
 #find_package(PythonLibs ${PYTHON_VERSION_MAJOR}.${PYTHON_VERSION_MINOR} EXACT REQUIRED)
 #find_package(PythonLibs ${PYTHON_VERSION_STRING} EXACT REQUIRED)

@@ -102,8 +102,14 @@ contains
   function obj_func(kappa) result(val)
     real(dp), intent(in) :: kappa(:)
     real(dp)             :: val
+    real(dp), allocatable :: mo_tmp(:,:)
+    allocate(mo_tmp(nbf,nbf))
+    mo_tmp = mo
     call rotate_orbs_trah(infos, molgrid, kappa, nocc, nvir, mo, fock_ao)
     val = compute_energy(infos)
+    mo = mo_tmp
+    print *, "mo from onj_func", mo
+    deallocate(mo_tmp)
   end function obj_func
 
 

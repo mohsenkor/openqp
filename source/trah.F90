@@ -445,7 +445,7 @@ print *, "==========================="
     logical :: second_term
     type(basis_set), pointer :: basis
 
-    call tagarray_get_data(infos%dat, OQP_VEC_MO_A, mo_a)
+!    call tagarray_get_data(infos%dat, OQP_VEC_MO_A, mo_a)
     basis => infos%basis
     nbf   = basis%nbf
     allocate(work_1(nbf,nbf),work_2(nbf,nbf))
@@ -464,9 +464,9 @@ print *, "==========================="
     call orthonormalize(work_1, nbf)
     call dgemm('N','N', nbf, nbf, nbf, 1.0_dp, mo, nbf, work_1, nbf, 0.0_dp, work_2, nbf)
     mo = work_2
-    mo_a = mo
+!    mo_a = mo
     print *,"mo in orbital after rot",mo
-    call get_fock(basis, infos, molgrid, fock_ao)
+    call get_fock(basis, infos, molgrid, fock_ao, mo)
 !    print *, "fock_ao",fock_ao
 !   here we need to calculate fock matrix again
 
@@ -560,7 +560,7 @@ print *, "==========================="
     etot = infos%mol_energy%energy
   end function
 
-  subroutine get_fock(basis, infos, molgrid, fock_ao)
+  subroutine get_fock(basis, infos, molgrid, fock_ao, mo_in)
     use precision, only: dp
     use oqp_tagarray_driver
     use types, only: information
@@ -578,6 +578,7 @@ print *, "==========================="
     type(information), target, intent(inout) :: infos
     type(dft_grid_t), intent(in) :: molgrid
     real(dp), pointer, intent(in)        :: fock_ao(:)
+    real(dp), target, intent(in), optional :: mo_in(:,:)
 
     integer :: nbf, nbf_tri, nfocks, scf_type, nelec, nelec_a, nelec_b
     integer :: i, ii, ok
@@ -687,7 +688,9 @@ print *, "==========================="
     ! Unpack overlap matrix to full for ROHF/level shift
     allocate(smat_full(nbf, nbf))
     call unpack_matrix(smat, smat_full, nbf, 'U')
-
+    if (present(mo_in)) then
+       mo_a = mo_in
+    end if
     ! 4. Compute Nuclear-Nuclear Repulsion Energy
     nenergy = e_charge_repulsion(infos%atoms%xyz, infos%atoms%zn - infos%basis%ecp_zn_num)
 

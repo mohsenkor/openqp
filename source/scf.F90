@@ -63,7 +63,7 @@ contains
     use scf_converger, only: scf_conv_result, scf_conv, &
                              conv_cdiis, conv_ediis, conv_soscf
     use scf_addons, only: pfon_t, apply_mom, level_shift_fock
-
+    use otr_interface, only: init_trah_solver, run_trah_solver
     implicit none
 
     character(len=*), parameter :: subroutine_name = "scf_driver"
@@ -651,6 +651,10 @@ contains
             &  3x,93('='))")
     end if
     call flush(IW)
+    if (infos%control%soscf_type == 2) then
+      call init_trah_solver(infos, molGrid, pfock(:,1), mo_a, nbf, nelec_a)
+      call run_trah_solver()
+    end if
 
     !==============================================================================
     ! Begin Main SCF Iteration Loop

@@ -654,7 +654,7 @@ contains
     if (infos%control%soscf_type == 2) then
       call init_trah_solver(infos, molGrid, pfock(:,1), mo_a, nbf, nelec_a)
       call run_trah_solver()
-    end if
+    else
 
     !==============================================================================
     ! Begin Main SCF Iteration Loop
@@ -1140,6 +1140,7 @@ contains
 
     ! End of Main SCF Iteration Loop
     end do
+    end if
 
     !----------------------------------------------------------------------------
     ! Clean Convergence Accelerator (DIIS/SOSCF)

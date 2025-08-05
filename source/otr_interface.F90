@@ -86,8 +86,6 @@ contains
     hess_x_funptr => hess_x_cb
     h_diag = 2.0_dp * h_diag
     grad = 2.0_dp * grad
-    print *, "grad", grad
-    print *, "h_diag", h_diag
   end subroutine update_orbs
 
 
@@ -108,7 +106,6 @@ contains
     call rotate_orbs_trah(infos, molgrid, kappa, nocc, nvir, mo, fock_ao)
     val = compute_energy(infos)
     mo = mo_tmp
-    print *, "mo from onj_func", mo
     deallocate(mo_tmp)
   end function obj_func
 

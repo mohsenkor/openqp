@@ -252,32 +252,21 @@ contains
 
   end subroutine calc_h_op
 
-  subroutine rotate_orbs_trah(infos, molgrid ,step, nocc_a, nocc_b, mo, fock_ao)
-
-    use types, only: information
-    use basis_tools,      only: basis_set
-    use mod_dft_molgrid, only: dft_grid_t
+  subroutine rotate_orbs_trah(infos, step, nbf,nocc_a, nocc_b, mo)
+    use types, only : information
     use oqp_tagarray_driver
     implicit none
 
-
     class(information), intent(inout), target :: infos
-    type(dft_grid_t), intent(in) :: molgrid
     real(kind=dp), intent(in)        :: step(:)
-    integer, intent(in)              :: nocc_a, nocc_b
+    integer, intent(in)              :: nbf,nocc_a, nocc_b
     real(kind=dp), intent(inout)     :: mo(:,:)
     real(kind=dp), allocatable       :: work_1(:,:), work_2(:,:)
-    real(dp), pointer, intent(inout)        :: fock_ao(:,:)
     real(kind=dp), contiguous, pointer :: mo_a(:,:), mo_b(:,:)
-    character(len=*), parameter :: tags_alpha(1) = &
-            (/ character(len=80) :: OQP_VEC_MO_A /)
-    integer            :: nbf, i, idx
+    integer            :: i, idx
     logical :: second_term
-    type(basis_set), pointer :: basis
 
-    call tagarray_get_data(infos%dat, OQP_VEC_MO_A, mo_a)
-    basis => infos%basis
-    nbf   = basis%nbf
+!    call tagarray_get_data(infos%dat, OQP_VEC_MO_A, mo_a)
     allocate(work_1(nbf,nbf),work_2(nbf,nbf))
     work_1 = 0
     work_2 = 0
@@ -291,8 +280,7 @@ contains
     call orthonormalize(work_1, nbf)
     call dgemm('N','N', nbf, nbf, nbf, 1.0_dp, mo, nbf, work_1, nbf, 0.0_dp, work_2, nbf)
     mo = work_2
-    mo_a = mo
-    call get_fock(basis, infos, molgrid, fock_ao, mo)
+ !   mo_a = mo
 
 
   contains
@@ -361,7 +349,7 @@ contains
     etot = infos%mol_energy%energy
   end function
 
-  subroutine get_fock(basis, infos, molgrid, fock_ao, mo_in)
+  subroutine get_fock(basis, infos, molgrid, fock_ao, mo_a_in, mo_b_in)
     use precision, only: dp
     use oqp_tagarray_driver
     use types, only: information
@@ -379,7 +367,8 @@ contains
     type(information), target, intent(inout) :: infos
     type(dft_grid_t), intent(in) :: molgrid
     real(dp), pointer, intent(inout)        :: fock_ao(:,:)
-    real(dp), intent(inout), optional :: mo_in(:,:)
+    real(dp), intent(inout), optional :: mo_a_in(:,:)
+    real(dp), intent(inout), optional :: mo_b_in(:,:)
 
     integer :: nbf, nbf_tri, nfocks, scf_type, nelec, nelec_a, nelec_b
     integer :: i, ii, ok
@@ -489,8 +478,11 @@ contains
     ! Unpack overlap matrix to full for ROHF/level shift
     allocate(smat_full(nbf, nbf))
     call unpack_matrix(smat, smat_full, nbf, 'U')
-    if (present(mo_in)) then
-       mo_a = mo_in
+    if (present(mo_a_in)) then
+       mo_a = mo_a_in
+    end if
+    if (present(mo_b_in)) then
+       mo_b = mo_b_in
     end if
     ! 4. Compute Nuclear-Nuclear Repulsion Energy
     nenergy = e_charge_repulsion(infos%atoms%xyz, infos%atoms%zn - infos%basis%ecp_zn_num)
@@ -581,18 +573,22 @@ contains
     case (scf_rhf)
       fock_a = pfock(:,1)
       dmat_a = pdmat(:,1)
+      fock_ao(:,1) = pfock(:,1)
     case (scf_uhf)
       fock_a = pfock(:,1)
       fock_b = pfock(:,2)
       dmat_a = pdmat(:,1)
       dmat_b = pdmat(:,2)
+      fock_ao(:,1) = pfock(:,1)
+      fock_ao(:,2) = pfock(:,2)
     case (scf_rohf)
       fock_a = rohf_bak(:,1)
-!      call mo_to_ao(fock_b, pfock(:,2), smat_full, mo_a, nbf, nbf, work1, work2)
       dmat_a = pdmat(:,1) - pdmat(:,2)
       dmat_b = pdmat(:,2)
       mo_b = mo_a
       mo_energy_b = mo_energy_a
+      fock_ao(:,1) = rohf_bak(:,1)
+      fock_ao(:,2) = rohf_bak(:,2)
     end select
 
     fock_ao(:,1) = pfock(:,1)

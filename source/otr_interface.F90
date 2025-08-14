@@ -98,8 +98,18 @@ contains
     real(dp), intent(out)                    :: func
     real(dp), intent(out)                    :: grad(:), h_diag(:)
     procedure(hess_x_type), pointer, intent(out) :: hess_x_funptr
+    type(basis_set), pointer :: basis
+    basis => infos%basis
     ! Rotate orbitals
-    call rotate_orbs_trah(infos,molgrid, kappa, nocc_a, nvir_a, mo_a, fock_ao)
+    select case (infos%control%scftype)
+    case (1)
+      call rotate_orbs_trah(infos, kappa, nbf, nocc_a, nocc_a, mo_a)
+      call get_fock(basis, infos, molgrid, fock_ao, mo_a)
+    case (2)
+      call rotate_orbs_trah(infos, kappa, nbf, nocc_a, nocc_b, mo_a)
+      call rotate_orbs_trah(infos, kappa, nbf, nocc_a, nocc_b, mo_b)
+      call get_fock(basis, infos, molgrid, fock_ao)
+    end select
     ! Gradient & Hessian diag
     call calc_g_h(grad, h_diag, fock_ao, mo_a, nbf, nocc_a)
     func = compute_energy(infos)
@@ -121,9 +131,12 @@ contains
     real(dp), intent(in) :: kappa(:)
     real(dp)             :: val
     real(dp), allocatable :: mo_tmp(:,:)
+    type(basis_set), pointer :: basis
+    basis => infos%basis
     allocate(mo_tmp(nbf,nbf))
     mo_tmp = mo_a
-    call rotate_orbs_trah(infos, molgrid, kappa, nocc_a, nvir_a, mo_a, fock_ao)
+    call rotate_orbs_trah(infos, kappa, nbf, nocc_a, nvir_a, mo_a)
+    call get_fock(basis, infos, molgrid, fock_ao, mo_a)
     val = compute_energy(infos)
     mo_a = mo_tmp
     deallocate(mo_tmp)

@@ -14,7 +14,7 @@ contains
     integer, intent(in) :: nbf, nocc
     real(dp), intent(out) :: grad(:)
     real(dp), intent(out) :: h_diag(:)
-    real(dp), intent(in)  :: fock_ao(:)      ! packed AO fock
+    real(dp), intent(in)  :: fock_ao(:,:)      ! packed AO fock
     real(dp), intent(inout)  :: mo(nbf,nbf)     ! MO coefficient matrix
 !    real(dp), allocatable :: grad(:)
 !    real(dp), allocatable :: h_diag(:)
@@ -37,7 +37,7 @@ contains
     if (size(h_diag)/= nocc*nvir) stop 'h_diag wrong size'
 
     ! unpack the AO fock into a full (nbf×nbf) matrix
-    call unpack_matrix(fock_ao, work1)
+    call unpack_matrix(fock_ao(:,1), work1)
     work2 = 0.0_dp
     work3 = 0.0_dp
     call dgemm('N','N', nbf, nbf, nbf, &
@@ -142,7 +142,7 @@ contains
     real(dp), intent(in)                 :: x(:)    ! length nocc*nvir
 !    real(dp), allocatable                 :: x(:), x2(:)
     real(dp), intent(out)                :: x2(:)   ! same length
-    real(dp), pointer, intent(in)        :: fock_ao(:)
+    real(dp), pointer, intent(in)        :: fock_ao(:,:)
     real(dp), intent(inout)                 :: mo(:, :)
 
     integer :: nbf, nocc, nvir, i, a, k
@@ -179,7 +179,7 @@ contains
         xmat(i,a) = x(k)
       end do
     end do
-    call unpack_matrix(fock_ao, work1)
+    call unpack_matrix(fock_ao(:,1), work1)
 
     call dgemm('N','N', nbf, nbf, nbf, &
                1.0_dp, work1, nbf,      &
@@ -267,7 +267,7 @@ contains
     integer, intent(in)              :: nocc_a, nocc_b
     real(kind=dp), intent(inout)     :: mo(:,:)
     real(kind=dp), allocatable       :: work_1(:,:), work_2(:,:)
-    real(dp), pointer, intent(inout)        :: fock_ao(:)
+    real(dp), pointer, intent(inout)        :: fock_ao(:,:)
     real(kind=dp), contiguous, pointer :: mo_a(:,:), mo_b(:,:)
     character(len=*), parameter :: tags_alpha(1) = &
             (/ character(len=80) :: OQP_VEC_MO_A /)
@@ -378,7 +378,7 @@ contains
     type(basis_set), intent(in) :: basis
     type(information), target, intent(inout) :: infos
     type(dft_grid_t), intent(in) :: molgrid
-    real(dp), pointer, intent(inout)        :: fock_ao(:)
+    real(dp), pointer, intent(inout)        :: fock_ao(:,:)
     real(dp), intent(inout), optional :: mo_in(:,:)
 
     integer :: nbf, nbf_tri, nfocks, scf_type, nelec, nelec_a, nelec_b
@@ -595,7 +595,7 @@ contains
       mo_energy_b = mo_energy_a
     end select
 
-    fock_ao = pfock(:,1)
+    fock_ao(:,1) = pfock(:,1)
     infos%mol_energy%energy = etot
 
   end subroutine get_fock

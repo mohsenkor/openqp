@@ -658,7 +658,7 @@ contains
     do iter = 1, maxit
 
       if (infos%control%soscf_type == 2) then
-        call init_trah_solver(infos, molGrid, pfock(:,1), mo_a, nbf, nelec_a)
+        call init_trah_solver(infos, molGrid, pfock, mo_a, mo_b)
         call run_trah_solver()
         call get_ab_initio_orbital(pfock(:,1), mo_a, mo_energy_a, qmat)
         mo_a = mo_b

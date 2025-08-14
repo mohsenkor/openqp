@@ -105,13 +105,14 @@ contains
     case (1)
       call rotate_orbs_trah(infos, kappa, nbf, nocc_a, nocc_a, mo_a)
       call get_fock(basis, infos, molgrid, fock_ao, mo_a)
+   ! Gradient & Hessian diag
+      call calc_g_h(grad, h_diag, fock_ao, mo_a, nbf, nocc_a, infos%control%scftype)
     case (2)
       call rotate_orbs_trah(infos, kappa, nbf, nocc_a, nocc_b, mo_a)
       call rotate_orbs_trah(infos, kappa, nbf, nocc_a, nocc_b, mo_b)
       call get_fock(basis, infos, molgrid, fock_ao)
+      call calc_g_h(grad, h_diag, fock_ao, mo_a, nbf, nocc_a, infos%control%scftype, mo_b, nocc_b)
     end select
-    ! Gradient & Hessian diag
-    call calc_g_h(grad, h_diag, fock_ao, mo_a, nbf, nocc_a)
     func = compute_energy(infos)
     hess_x_funptr => hess_x_cb
     h_diag = 2.0_dp * h_diag

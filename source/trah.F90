@@ -8,65 +8,127 @@ module trah
 
 contains
 
-  subroutine calc_g_h(grad, h_diag, fock_ao, mo, nbf, nocc)
+  subroutine calc_g_h(grad, h_diag, fock_ao, mo_a, nbf, nocc_a, scftype, mo_b, nocc_b)
+!    use types, only: information
     use mathlib, only: pack_matrix, unpack_matrix
     implicit none
-    integer, intent(in) :: nbf, nocc
+!    type(information), intent(inout) :: infos
+    integer, intent(in) :: scftype, nbf, nocc_a
+    integer, intent(in), optional :: nocc_b
     real(dp), intent(out) :: grad(:)
     real(dp), intent(out) :: h_diag(:)
     real(dp), intent(in)  :: fock_ao(:,:)      ! packed AO fock
-    real(dp), intent(inout)  :: mo(nbf,nbf)     ! MO coefficient matrix
-!    real(dp), allocatable :: grad(:)
-!    real(dp), allocatable :: h_diag(:)
+    real(dp), intent(inout)  :: mo_a(nbf,nbf)     ! MO coefficient matrix
+    real(dp), intent(inout), optional  :: mo_b(nbf,nbf)     ! MO coefficient matrix
 
     integer :: nvir, i, a, k
-    real(dp), allocatable :: foo(:,:), fvv(:,:)
     real(dp), allocatable :: work1(:,:), work2(:,:), work3(:,:)
 
     ! dimensions
-    nvir = nbf - nocc
+    nvir = nbf - nocc_a
 
-    allocate(foo(nocc,nocc))
-    allocate(fvv(nvir,nvir))
     allocate(work1(nbf,nbf))
     allocate(work2(nbf,nbf))
     allocate(work3(nbf,nbf))
-!    allocate(grad(nocc*nvir))
-!    allocate(h_diag(nocc*nvir))
-    if (size(grad)   /= nocc*nvir) stop 'grad wrong size'
-    if (size(h_diag)/= nocc*nvir) stop 'h_diag wrong size'
 
-    ! unpack the AO fock into a full (nbf×nbf) matrix
-    call unpack_matrix(fock_ao(:,1), work1)
-    work2 = 0.0_dp
-    work3 = 0.0_dp
-    call dgemm('N','N', nbf, nbf, nbf, &
-               1.0_dp, work1, nbf,      &
-                       mo, nbf, &
-               0.0_dp, work2, nbf)
+!    if (size(grad)   /= nocc_a*nvir) stop 'grad wrong size'
+!    if (size(h_diag)/= nocc_a*nvir) stop 'h_diag wrong size'
+    select case(scftype)
+    case (1)
+      ! unpack the AO fock into a full (nbf×nbf) matrix
+      call unpack_matrix(fock_ao(:,1), work1)
+      work2 = 0.0_dp
+      work3 = 0.0_dp
+      call dgemm('N','N', nbf, nbf, nbf, &
+                 1.0_dp, work1, nbf,      &
+                         mo_a, nbf, &
+                 0.0_dp, work2, nbf)
 
-    ! foo(i,a) = ∑_μ C(μ,i)^T · work2(μ,a)
-    call dgemm('T','N', nbf, nbf, nbf, &
-               1.0_dp, mo, nbf, &
-                       work2,         nbf, &
-               0.0_dp, work3,nbf)
+      ! foo(i,a) = ∑_μ C(μ,i)^T · work2(μ,a)
+      call dgemm('T','N', nbf, nbf, nbf, &
+                 1.0_dp, mo_a, nbf, &
+                         work2,         nbf, &
+                 0.0_dp, work3,nbf)
 
-    k = 0
-    do i = nocc +1, nbf
-      do a = 1, nocc
-        k= k+1
-        grad(k) =  2 * work3(i,a)
+      k = 0
+      do i = nocc_a +1, nbf
+        do a = 1, nocc_a
+          k= k+1
+          grad(k) =  2 * work3(i,a)
+        end do
       end do
-    end do
 
-    k = 0
-    do i = nocc +1, nbf
-      do a = 1, nocc
-        k= k+1
-        h_diag(k) = 2.0_dp*( work3(i,i) - work3(a,a) )
+      k = 0
+      do i = nocc_a +1, nbf
+        do a = 1, nocc_a
+          k= k+1
+          h_diag(k) = 2.0_dp*( work3(i,i) - work3(a,a) )
+        end do
       end do
-    end do
-    deallocate(foo, fvv, work1, work2, work3)
+! UHF   
+    case(2)
+      ! unpack the AO Beta fock matrix
+      call unpack_matrix(fock_ao(:,1), work1)
+      work2 = 0.0_dp
+      work3 = 0.0_dp
+      call dgemm('N','N', nbf, nbf, nbf, &
+                 1.0_dp, work1, nbf,      &
+                         mo_a, nbf, &
+                 0.0_dp, work2, nbf)
+
+      ! foo(i,a) = ∑_μ C(μ,i)^T · work2(μ,a)
+      call dgemm('T','N', nbf, nbf, nbf, &
+                 1.0_dp, mo_a, nbf, &
+                         work2,         nbf, &
+                 0.0_dp, work3,nbf)
+
+      k = 0
+      do i = nocc_a +1, nbf
+        do a = 1, nocc_a
+          k= k+1
+          grad(k) =  2 * work3(i,a)
+        end do
+      end do
+
+      k = 0
+      do i = nocc_a +1, nbf
+        do a = 1, nocc_a
+          k= k+1
+          h_diag(k) = 2.0_dp*( work3(i,i) - work3(a,a) )
+        end do
+      end do
+      ! unpack the Beta fock matrix
+      call unpack_matrix(fock_ao(:,2), work1)
+      work2 = 0.0_dp
+      work3 = 0.0_dp
+      call dgemm('N','N', nbf, nbf, nbf, &
+                 1.0_dp, work1, nbf,      &
+                         mo_b, nbf, &
+                 0.0_dp, work2, nbf)
+
+      ! foo(i,a) = ∑_μ C(μ,i)^T · work2(μ,a)
+      call dgemm('T','N', nbf, nbf, nbf, &
+                 1.0_dp, mo_b, nbf, &
+                         work2,         nbf, &
+                 0.0_dp, work3,nbf)
+
+      k = (nbf-nocc_a) * nocc_a
+      do i = nocc_b +1, nbf
+        do a = 1, nocc_b
+          k= k+1
+          grad(k) =  2 * work3(i,a)
+        end do
+      end do
+
+      k = (nbf-nocc_a) * nocc_a
+      do i = nocc_b +1, nbf
+        do a = 1, nocc_b
+          k= k+1
+          h_diag(k) = 2.0_dp*( work3(i,i) - work3(a,a) )
+        end do
+      end do
+    end select
+    deallocate(work1, work2, work3)
 
   end subroutine calc_g_h
 
@@ -202,7 +264,7 @@ contains
     call dgemm('N','N', nvir, nocc, nocc, &
               -1.0_dp, xmat, nvir, &
                         foo, nocc, &
-               1.0_dp, x2mat, nvir) 
+               1.0_dp, x2mat, nvir)
 
     dm = 0.0_dp
     work2 = 0
@@ -239,7 +301,7 @@ contains
                        mo, nbf, &
                0.0_dp, work3,  nbf)
     x2mat = x2mat + work3(nocc+1:,1:nocc)
-    
+
     k = 0
     do i = 1, nvir
       do a = 1, nocc
@@ -308,7 +370,7 @@ contains
           K(occ, virt) = -step(idx)
         end do
       end do
-      
+
       G = 0.0_dp
       do i = 1, nbf
         G(i,i) = 1.0_dp

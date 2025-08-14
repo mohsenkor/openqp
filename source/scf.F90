@@ -660,6 +660,19 @@ contains
       if (infos%control%soscf_type == 2) then
         call init_trah_solver(infos, molGrid, pfock(:,1), mo_a, nbf, nelec_a)
         call run_trah_solver()
+        call get_ab_initio_orbital(pfock(:,1), mo_a, mo_energy_a, qmat)
+        mo_a = mo_b
+        call get_ab_initio_density(pdmat(:,1),mo_a,pdmat(:,2),mo_b,infos,basis)
+        ehf = 0.0_dp
+        ehf1 = 0.0_dp
+        ! Compute one and two-electron energies
+        do i = 1, nfocks
+          ehf1 = ehf1 + traceprod_sym_packed(pdmat(:,i), hcore, nbf)
+          ehf = ehf + traceprod_sym_packed(pdmat(:,i), pfock(:,i), nbf)
+        end do
+        ! Total HF energy = 0.5*(E1 + E2) (to avoid double-counting)
+        ehf = 0.5_dp * (ehf + ehf1)
+        etot = ehf + nenergy
         exit
       endif
 

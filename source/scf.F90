@@ -651,15 +651,18 @@ contains
             &  3x,93('='))")
     end if
     call flush(IW)
-    if (infos%control%soscf_type == 2) then
-      call init_trah_solver(infos, molGrid, pfock(:,1), mo_a, nbf, nelec_a)
-      call run_trah_solver()
-    else
 
     !==============================================================================
     ! Begin Main SCF Iteration Loop
     !==============================================================================
     do iter = 1, maxit
+
+      if (infos%control%soscf_type == 2) then
+        call init_trah_solver(infos, molGrid, pfock(:,1), mo_a, nbf, nelec_a)
+        call run_trah_solver()
+        exit
+      endif
+
       if (do_rstctmo) then
         mo_energy_a_for_rstctmo = mo_energy_a
         mo_a_for_rstctmo = mo_a
@@ -1140,7 +1143,6 @@ contains
 
     ! End of Main SCF Iteration Loop
     end do
-    end if
 
     !----------------------------------------------------------------------------
     ! Clean Convergence Accelerator (DIIS/SOSCF)

@@ -106,16 +106,13 @@ contains
     scalef = 1.0d0
     if (present(scalefactor)) scalef = scalefactor
 
-!    call measure_time(print_total=1, log_unit=IW)
 
-!    write(IW,"(/3x,'Form Two-Electron J and K Fock')")
 
     ! Initialize ERI calculations
     call int2_driver%init(basis, infos)
     call int2_driver%set_screening()
     int2_data = int2_rhf_data_t(nfocks=1, d=d, scale_exchange=scalefactor)
 
-!    call flush(IW)
 
     ! Constructing two electron Fock matrix
     call int2_driver%run(int2_data)
@@ -212,8 +209,7 @@ contains
     call dgemm('N','N', nbf, nocc, nvir, &
                2.0_dp, mo(:, nocc+1:nbf), nbf, &
                        xmat,             nvir, &
-               0.0_dp, work2,          nbf)
-!    print *, "mo(:, nocc+1:nbf)"
+              0.0_dp, work2,          nbf)
     ! 2) work3 = work2 * orbo^T
     call dgemm('N','T', nbf, nbf, nocc, &
                1.0_dp, work2,          nbf, &
@@ -382,8 +378,8 @@ contains
     type(basis_set), intent(in) :: basis
     type(information), target, intent(inout) :: infos
     type(dft_grid_t), intent(in) :: molgrid
-    real(dp), pointer, intent(in)        :: fock_ao(:)
-    real(dp), target, intent(in), optional :: mo_in(:,:)
+    real(dp), pointer, intent(inout)        :: fock_ao(:)
+    real(dp), intent(inout), optional :: mo_in(:,:)
 
     integer :: nbf, nbf_tri, nfocks, scf_type, nelec, nelec_a, nelec_b
     integer :: i, ii, ok

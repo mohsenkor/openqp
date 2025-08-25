@@ -661,7 +661,12 @@ contains
         call init_trah_solver(infos, molGrid, pfock, mo_a, mo_b)
         call run_trah_solver()
         call get_ab_initio_orbital(pfock(:,1), mo_a, mo_energy_a, qmat)
-        mo_a = mo_b
+        select case (scf_type)
+        case(scf_uhf)
+          call get_ab_initio_orbital(pfock(:,1), mo_b, mo_energy_b, qmat)
+        case(scf_rohf)
+          mo_a = mo_b
+        end select
         call get_ab_initio_density(pdmat(:,1),mo_a,pdmat(:,2),mo_b,infos,basis)
         ehf = 0.0_dp
         ehf1 = 0.0_dp

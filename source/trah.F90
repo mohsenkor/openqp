@@ -65,7 +65,7 @@ contains
           h_diag(k) = 2.0_dp*( work3(i,i) - work3(a,a) )
         end do
       end do
-! UHF   
+! UHF
     case(2)
       ! unpack the AO Beta fock matrix
       call unpack_matrix(fock_ao(:,1), work1)
@@ -194,7 +194,7 @@ contains
 
   end subroutine fock_jk
 
-  subroutine calc_h_op(infos,fock_ao, x, x2, mo, nbf ,nocc)
+  subroutine calc_h_op(infos,fock_ao, x, x2, mo, mo_b)
     use types, only: information
     use basis_tools,  only: basis_set
     use mathlib, only: pack_matrix, unpack_matrix
@@ -202,23 +202,35 @@ contains
 
     class(information), intent(inout), target :: infos
     real(dp), intent(in)                 :: x(:)    ! length nocc*nvir
-!    real(dp), allocatable                 :: x(:), x2(:)
     real(dp), intent(out)                :: x2(:)   ! same length
     real(dp), pointer, intent(in)        :: fock_ao(:,:)
-    real(dp), intent(inout)                 :: mo(:, :)
+    real(dp), intent(inout)              :: mo(:, :)
+    real(dp), optional, intent(inout)    :: mo_b(:,:)
 
-    integer :: nbf, nocc, nvir, i, a, k
-    real(dp), allocatable :: foo(:,:), fvv(:,:), xmat(:,:),&
-            x2mat(:,:), v(:,:), work2(:,:), work1(:,:), &
-            work3(:,:),temp(:,:)
+    integer :: nbf, nocc_a,nocc_b, nvir_a, nvir_b, i, a, k
+    real(dp), allocatable :: foo(:,:), fvv(:,:), xmat(:,:), x2mat(:,:),&
+             foo_b(:,:), fvv_b(:,:), xmat_b(:,:),x2mat_b(:,:),&
+             v(:,:), work2(:,:), work1(:,:), &
+            work3(:,:)
     real(dp), allocatable :: pfock(:,:)
     real(dp), allocatable :: dm(:,:), dm_tri(:,:)
     real(kind=dp) :: scalefactor
     type(basis_set), pointer :: basis
     logical :: is_dft
 
+    integer :: scf_type                 ! Type of SCF calculation
+    integer, parameter :: scf_rhf  = 1  ! Restricted Hartree-Fock
+    integer, parameter :: scf_uhf  = 2  ! Unrestricted Hartree-Fock
+    integer, parameter :: scf_rohf = 3  ! Restricted Open-Shell Hartree-Fock
+    integer:: nfocks
+
     ! dims
-    nvir = nbf - nocc
+    basis => infos%basis
+    nbf = basis%nbf
+    nocc_a = infos%mol_prop%nelec_a
+    nocc_b = infos%mol_prop%nelec_b
+    nvir_a = nbf - nocc_a
+    nvir_b = nbf - nocc_b
 
     is_dft = infos%control%hamilton >= 20
     if (is_dft) then
@@ -228,107 +240,251 @@ contains
     end if
     basis => infos%basis
 
-    allocate(foo(nocc,nocc), fvv(nvir,nvir))
+    allocate(foo(nocc_a,nocc_a), fvv(nvir_a,nvir_a))
     allocate(work3(nbf,nbf), work2(nbf,nbf), work1(nbf,nbf))
-    allocate(xmat(nvir,nocc), x2mat(nvir,nocc), temp(nvir,nocc))
+    allocate(xmat(nvir_a,nocc_a), x2mat(nvir_a,nocc_a))
     allocate(dm(nbf,nbf), v(nbf,nbf))
-!    allocate(x(nocc*nvir),x2(nocc*nvir))
     allocate(pfock(nbf*(nbf+1)/2,2),dm_tri(nbf*(nbf+1)/2,2))
-    k = 0
-    do i = 1, nvir
-      do a = 1, nocc
-        k= k+1
-        xmat(i,a) = x(k)
+
+    select case (infos%control%scftype)
+    case (1)
+      scf_type = scf_rhf
+      nfocks = 1
+    case (2)
+      scf_type = scf_uhf
+      nfocks = 2
+      allocate(foo_b(nocc_b,nocc_b), fvv_b(nvir_b,nvir_b))
+      allocate(xmat_b(nvir_b,nocc_b), x2mat_b(nvir_a,nocc_b))
+
+    case (3)
+      scf_type = scf_rohf
+      nfocks = 2
+    end select
+    select case (scf_type)
+    case(scf_rhf)
+      k = 0
+      do i = 1, nvir_a
+        do a = 1, nocc_a
+          k= k+1
+          xmat(i,a) = x(k)
+        end do
       end do
-    end do
-    call unpack_matrix(fock_ao(:,1), work1)
+      call unpack_matrix(fock_ao(:,1), work1)
 
-    call dgemm('N','N', nbf, nbf, nbf, &
-               1.0_dp, work1, nbf,      &
-                       mo, nbf, &
-               0.0_dp, work2, nbf)
-
-    ! foo(i,a) = ∑_μ C(μ,i)^T · work2(μ,a)
-    call dgemm('T','N', nbf, nbf, nbf, &
-               1.0_dp, mo, nbf, &
-                       work2,         nbf, &
-               0.0_dp, work3,nbf)
-     foo = work3(1:nocc,1:nocc)
-     fvv = work3(nocc+1:nbf,nocc+1:nbf)
+      call dgemm('N','N', nbf, nbf, nbf, &
+                 1.0_dp, work1, nbf,      &
+                         mo, nbf, &
+                 0.0_dp, work2, nbf)
+      call dgemm('T','N', nbf, nbf, nbf, &
+                 1.0_dp, mo, nbf, &
+                         work2,         nbf, &
+                 0.0_dp, work3,nbf)
+       foo = work3(1:nocc_a,1:nocc_a)
+       fvv = work3(nocc_a+1:nbf,nocc_a+1:nbf)
 
 
-    call dgemm('N','N', nvir, nocc, nvir, &
-               1.0_dp, fvv,  nvir, &
-                       xmat, nvir, &
-               0.0_dp, x2mat, nvir)
-    call dgemm('N','N', nvir, nocc, nocc, &
-              -1.0_dp, xmat, nvir, &
-                        foo, nocc, &
-               1.0_dp, x2mat, nvir)
+      call dgemm('N','N', nvir_a, nocc_a, nvir_a, &
+                 1.0_dp, fvv,  nvir_a, &
+                         xmat, nvir_a, &
+                 0.0_dp, x2mat, nvir_a)
+      call dgemm('N','N', nvir_a, nocc_a, nocc_a, &
+                -1.0_dp, xmat, nvir_a, &
+                          foo, nocc_a, &
+                 1.0_dp, x2mat, nvir_a)
 
-    dm = 0.0_dp
-    work2 = 0
-    call dgemm('N','N', nbf, nocc, nvir, &
-               2.0_dp, mo(:, nocc+1:nbf), nbf, &
-                       xmat,             nvir, &
-              0.0_dp, work2,          nbf)
-    ! 2) work3 = work2 * orbo^T
-    call dgemm('N','T', nbf, nbf, nocc, &
-               1.0_dp, work2,          nbf, &
-                       mo(:, 1:nocc),   nbf, &
-               0.0_dp, work3,          nbf)
-    ! 3) dm1 = work3 + work3^T
-!    dm = work3
-    do i = 1, nbf
-      do a = 1, nbf
-        dm(i,a) = work3(i,a) + work3(a,i)
+      dm = 0.0_dp
+      work2 = 0
+      call dgemm('N','N', nbf, nocc_a, nvir_a, &
+                 2.0_dp, mo(:, nocc_a+1:nbf), nbf, &
+                         xmat,             nvir_a, &
+                0.0_dp, work2,          nbf)
+      call dgemm('N','T', nbf, nbf, nocc_a, &
+                 1.0_dp, work2,          nbf, &
+                         mo(:, 1:nocc_a),   nbf, &
+                 0.0_dp, work3,          nbf)
+      do i = 1, nbf
+        do a = 1, nbf
+          dm(i,a) = work3(i,a) + work3(a,i)
+        end do
       end do
-    end do
-    call pack_matrix(dm,dm_tri(:,1))
-    dm_tri(:,1) = dm_tri(:,1)
-    call fock_jk(infos%basis, dm_tri, pfock, scalefactor, infos)
-    call unpack_matrix(pfock(:,1), v)
-    work2 = 0
+      call pack_matrix(dm,dm_tri(:,1))
+      dm_tri(:,2) = dm_tri(:,1)
+      call fock_jk(infos%basis, dm_tri, pfock, scalefactor, infos)
+      call unpack_matrix(pfock(:,1), v)
+      work2 = 0
 
-    call dgemm('T','N', nbf, nbf, nbf, &
-               1.0_dp, mo, nbf, &
-                       v ,             nbf, &
-               0.0_dp, work2,          nbf)
-    ! 2) work3 = work2 * orbo^T
-    work3 = 0
-    call dgemm('N','N', nbf, nbf, nbf, &
-               1.0_dp, work2, nbf, &
-                       mo, nbf, &
-               0.0_dp, work3,  nbf)
-    x2mat = x2mat + work3(nocc+1:,1:nocc)
+      call dgemm('T','N', nbf, nbf, nbf, &
+                 1.0_dp, mo, nbf, &
+                         v ,             nbf, &
+                 0.0_dp, work2,          nbf)
+      work3 = 0
+      call dgemm('N','N', nbf, nbf, nbf, &
+                 1.0_dp, work2, nbf, &
+                         mo, nbf, &
+                 0.0_dp, work3,  nbf)
+      x2mat = x2mat + work3(nocc_a+1:,1:nocc_a)
 
-    k = 0
-    do i = 1, nvir
-      do a = 1, nocc
-        k= k+1
-        x2(k) = 2*x2mat(i,a)
+      k = 0
+      do i = 1, nvir_a
+        do a = 1, nocc_a
+          k= k+1
+          x2(k) = 2*x2mat(i,a)
+        end do
       end do
-    end do
+      !#################### UHF
+    case (scf_uhf)
+! alpha
+      k = 0
+      do i = 1, nvir_a
+        do a = 1, nocc_a
+          k= k+1
+          xmat(i,a) = x(k)
+        end do
+      end do
+      call unpack_matrix(fock_ao(:,1), work1)
+
+      call dgemm('N','N', nbf, nbf, nbf, &
+                 1.0_dp, work1, nbf,      &
+                         mo, nbf, &
+                 0.0_dp, work2, nbf)
+      call dgemm('T','N', nbf, nbf, nbf, &
+                 1.0_dp, mo, nbf, &
+                         work2,         nbf, &
+                 0.0_dp, work3,nbf)
+       foo = work3(1:nocc_a,1:nocc_a)
+       fvv = work3(nocc_a+1:nbf,nocc_a+1:nbf)
+
+
+      call dgemm('N','N', nvir_a, nocc_a, nvir_a, &
+                 1.0_dp, fvv,  nvir_a, &
+                         xmat, nvir_a, &
+                 0.0_dp, x2mat, nvir_a)
+      call dgemm('N','N', nvir_a, nocc_a, nocc_a, &
+                -1.0_dp, xmat, nvir_a, &
+                          foo, nocc_a, &
+                 1.0_dp, x2mat, nvir_a)
+
+      dm = 0.0_dp
+      work2 = 0
+      call dgemm('N','N', nbf, nocc_a, nvir_a, &
+                 2.0_dp, mo(:, nocc_a+1:nbf), nbf, &
+                         xmat,             nvir_a, &
+                0.0_dp, work2,          nbf)
+      call dgemm('N','T', nbf, nbf, nocc_a, &
+                 1.0_dp, work2,          nbf, &
+                         mo(:, 1:nocc_a),   nbf, &
+                 0.0_dp, work3,          nbf)
+      do i = 1, nbf
+        do a = 1, nbf
+          dm(i,a) = work3(i,a) + work3(a,i)
+        end do
+      end do
+      call pack_matrix(dm,dm_tri(:,1))
+
+! beta
+      k = nvir_a*nocc_a
+      do i = 1, nvir_b
+        do a = 1, nocc_b
+          k= k+1
+          xmat_b(i,a) = x(k)
+        end do
+      end do
+      call unpack_matrix(fock_ao(:,2), work1)
+
+      call dgemm('N','N', nbf, nbf, nbf, &
+                 1.0_dp, work1, nbf,      &
+                         mo_b, nbf, &
+                 0.0_dp, work2, nbf)
+      call dgemm('T','N', nbf, nbf, nbf, &
+                 1.0_dp, mo_b, nbf, &
+                         work2,         nbf, &
+                 0.0_dp, work3,nbf)
+      foo_b = work3(1:nocc_b,1:nocc_b)
+      fvv_b = work3(nocc_b+1:nbf,nocc_b+1:nbf)
+
+      call dgemm('N','N', nvir_b, nocc_b, nvir_b, &
+                 1.0_dp, fvv_b,  nvir_b, &
+                         xmat_b, nvir_b, &
+                 0.0_dp, x2mat_b, nvir_b)
+      call dgemm('N','N', nvir_b, nocc_b, nocc_b, &
+                -1.0_dp, xmat_b, nvir_b, &
+                          foo_b, nocc_b, &
+                 1.0_dp, x2mat_b, nvir_b)
+
+      dm = 0.0_dp
+      work2 = 0
+      call dgemm('N','N', nbf, nocc_b, nvir_b, &
+                 2.0_dp, mo_b(:, nocc_b+1:nbf), nbf, &
+                         xmat_b,             nvir_b, &
+                0.0_dp, work2,          nbf)
+      call dgemm('N','T', nbf, nbf, nocc_b, &
+                 1.0_dp, work2,          nbf, &
+                         mo_b(:, 1:nocc_b),   nbf, &
+                 0.0_dp, work3,          nbf)
+      do i = 1, nbf
+        do a = 1, nbf
+          dm(i,a) = work3(i,a) + work3(a,i)
+        end do
+      end do
+
+      call pack_matrix(dm,dm_tri(:,2))
+! end of dm calculation
+      call fock_jk(infos%basis, dm_tri, pfock, scalefactor, infos)
+! alpha x2mat
+      call unpack_matrix(pfock(:,1), v)
+      work2 = 0
+      call dgemm('T','N', nbf, nbf, nbf, &
+                 1.0_dp, mo, nbf, &
+                         v ,             nbf, &
+                 0.0_dp, work2,          nbf)
+      work3 = 0
+      call dgemm('N','N', nbf, nbf, nbf, &
+                 1.0_dp, work2, nbf, &
+                         mo, nbf, &
+                 0.0_dp, work3,  nbf)
+      x2mat = x2mat + work3(nocc_a+1:,1:nocc_a)
+
+! beta x2mat
+      call unpack_matrix(pfock(:,2), v)
+      work2 = 0
+      call dgemm('T','N', nbf, nbf, nbf, &
+                 1.0_dp, mo, nbf, &
+                         v ,             nbf, &
+                 0.0_dp, work2,          nbf)
+      work3 = 0
+      call dgemm('N','N', nbf, nbf, nbf, &
+                 1.0_dp, work2, nbf, &
+                         mo, nbf, &
+                 0.0_dp, work3,  nbf)
+      x2mat_b = x2mat_b + work3(nocc_b+1:,1:nocc_b)
+
+      k = 0
+      do i = 1, nvir_b
+        do a = 1, nocc_b
+          k= k+1
+          x2(k) = 2*x2mat(i,a)
+        end do
+      end do
+    end select
 
     deallocate(foo,fvv,work1,work2,work3,dm,v,xmat,x2mat)
 
   end subroutine calc_h_op
 
-  subroutine rotate_orbs_trah(infos, step, nbf,nocc_a, nocc_b, mo)
+  subroutine rotate_orbs_trah(infos, step, nbf,nocc_a, mo)
     use types, only : information
     use oqp_tagarray_driver
     implicit none
 
     class(information), intent(inout), target :: infos
     real(kind=dp), intent(in)        :: step(:)
-    integer, intent(in)              :: nbf,nocc_a, nocc_b
+    integer, intent(in)              :: nbf,nocc_a
     real(kind=dp), intent(inout)     :: mo(:,:)
     real(kind=dp), allocatable       :: work_1(:,:), work_2(:,:)
     real(kind=dp), contiguous, pointer :: mo_a(:,:), mo_b(:,:)
     integer            :: i, idx
     logical :: second_term
 
-!    call tagarray_get_data(infos%dat, OQP_VEC_MO_A, mo_a)
     allocate(work_1(nbf,nbf),work_2(nbf,nbf))
     work_1 = 0
     work_2 = 0
@@ -337,7 +493,7 @@ contains
     if (infos%control%scftype == 3) then! ROHF
       second_term = .false.
     end if
-    call exp_scaling(work_1, step, idx, nocc_a, nocc_b, nbf, second_term)
+    call exp_scaling(work_1, step, idx, nocc_a, nbf, second_term)
 
     call orthonormalize(work_1, nbf)
     call dgemm('N','N', nbf, nbf, nbf, 1.0_dp, mo, nbf, work_1, nbf, 0.0_dp, work_2, nbf)
@@ -347,12 +503,12 @@ contains
 
   contains
 
-    subroutine exp_scaling(G, step, idx, nocc_a, nocc_b, nbf, second_term)
+    subroutine exp_scaling(G, step, idx, nocc_a, nbf, second_term)
       use matrix_expm_mod, only: expm
       real(kind=dp), intent(out)     :: G(:,:)
       real(kind=dp), intent(in)      :: step(:)
       integer, intent(inout)         :: idx
-      integer, intent(in)            :: nocc_a, nocc_b, nbf
+      integer, intent(in)            :: nocc_a, nbf
 
       real(kind=dp), allocatable     :: K(:,:), K2(:,:)
       integer                        :: occ, virt, istart, i

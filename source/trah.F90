@@ -86,7 +86,7 @@ contains
       do i = nocc_a +1, nbf
         do a = 1, nocc_a
           k= k+1
-          grad(k) =  2 * work3(i,a)
+          grad(k) =  work3(i,a)
         end do
       end do
 
@@ -94,7 +94,7 @@ contains
       do i = nocc_a +1, nbf
         do a = 1, nocc_a
           k= k+1
-          h_diag(k) = 2.0_dp*( work3(i,i) - work3(a,a) )
+          h_diag(k) = ( work3(i,i) - work3(a,a) )
         end do
       end do
       ! unpack the Beta fock matrix
@@ -116,7 +116,7 @@ contains
       do i = nocc_b +1, nbf
         do a = 1, nocc_b
           k= k+1
-          grad(k) =  2 * work3(i,a)
+          grad(k) =   work3(i,a)
         end do
       end do
 
@@ -124,7 +124,7 @@ contains
       do i = nocc_b +1, nbf
         do a = 1, nocc_b
           k= k+1
-          h_diag(k) = 2.0_dp*( work3(i,i) - work3(a,a) )
+          h_diag(k) = ( work3(i,i) - work3(a,a) )
         end do
       end do
     end select
@@ -173,7 +173,13 @@ contains
     ! Initialize ERI calculations
     call int2_driver%init(basis, infos)
     call int2_driver%set_screening()
-    int2_data = int2_rhf_data_t(nfocks=1, d=d, scale_exchange=scalefactor)
+    
+    select case (infos%control%scftype)
+    case (1)
+      int2_data = int2_rhf_data_t(nfocks=1, d=d, scale_exchange=scalefactor)
+    case (2)
+      int2_data = int2_urohf_data_t(nfocks=2, d=d, scale_exchange=scalefactor)
+    end select
 
 
     ! Constructing two electron Fock matrix
@@ -254,7 +260,7 @@ contains
       scf_type = scf_uhf
       nfocks = 2
       allocate(foo_b(nocc_b,nocc_b), fvv_b(nvir_b,nvir_b))
-      allocate(xmat_b(nvir_b,nocc_b), x2mat_b(nvir_a,nocc_b))
+      allocate(xmat_b(nvir_b,nocc_b), x2mat_b(nvir_b,nocc_b))
 
     case (3)
       scf_type = scf_rohf
@@ -367,7 +373,7 @@ contains
       dm = 0.0_dp
       work2 = 0
       call dgemm('N','N', nbf, nocc_a, nvir_a, &
-                 2.0_dp, mo(:, nocc_a+1:nbf), nbf, &
+                 1.0_dp, mo(:, nocc_a+1:nbf), nbf, &
                          xmat,             nvir_a, &
                 0.0_dp, work2,          nbf)
       call dgemm('N','T', nbf, nbf, nocc_a, &
@@ -414,7 +420,7 @@ contains
       dm = 0.0_dp
       work2 = 0
       call dgemm('N','N', nbf, nocc_b, nvir_b, &
-                 2.0_dp, mo_b(:, nocc_b+1:nbf), nbf, &
+                 1.0_dp, mo_b(:, nocc_b+1:nbf), nbf, &
                          xmat_b,             nvir_b, &
                 0.0_dp, work2,          nbf)
       call dgemm('N','T', nbf, nbf, nocc_b, &
@@ -448,23 +454,31 @@ contains
       call unpack_matrix(pfock(:,2), v)
       work2 = 0
       call dgemm('T','N', nbf, nbf, nbf, &
-                 1.0_dp, mo, nbf, &
+                 1.0_dp, mo_b, nbf, &
                          v ,             nbf, &
                  0.0_dp, work2,          nbf)
       work3 = 0
       call dgemm('N','N', nbf, nbf, nbf, &
                  1.0_dp, work2, nbf, &
-                         mo, nbf, &
+                         mo_b, nbf, &
                  0.0_dp, work3,  nbf)
       x2mat_b = x2mat_b + work3(nocc_b+1:,1:nocc_b)
 
       k = 0
+      do i = 1, nvir_a
+        do a = 1, nocc_a
+          k= k+1
+          x2(k) = x2mat(i,a)
+        end do
+      end do
+
       do i = 1, nvir_b
         do a = 1, nocc_b
           k= k+1
-          x2(k) = 2*x2mat(i,a)
+          x2(k) = x2mat_b(i,a)
         end do
       end do
+
     end select
 
     deallocate(foo,fvv,work1,work2,work3,dm,v,xmat,x2mat)
@@ -503,43 +517,96 @@ contains
 
   contains
 
-    subroutine exp_scaling(G, step, idx, nocc_a, nbf, second_term)
-      use matrix_expm_mod, only: expm
-      real(kind=dp), intent(out)     :: G(:,:)
-      real(kind=dp), intent(in)      :: step(:)
-      integer, intent(inout)         :: idx
-      integer, intent(in)            :: nocc_a, nbf
+subroutine exp_scaling(G, step, idx, nocc_t, nbf, higher_order)
+  implicit none
+  integer,          intent(in)    :: nocc_t, nbf
+  real(kind=dp),    intent(out)   :: G(:,:)
+  real(kind=dp),    intent(in)    :: step(:)
+  integer,          intent(inout) :: idx
+  logical,          intent(in)    :: higher_order
 
-      real(kind=dp), allocatable     :: K(:,:), K2(:,:)
-      integer                        :: occ, virt, istart, i
-      logical, intent(inout)         :: second_term
-      integer :: info
+  real(kind=dp), allocatable :: K(:,:), Kpow(:,:), Tmp(:,:)
+  integer :: occ, virt, istart, i, m
+  integer, parameter :: max_order = 6      ! increase to 8/10 if desired
+  real(kind=dp) :: coef
 
-      allocate(K(nbf,nbf), source=0.0_dp)
-      allocate(K2(nbf,nbf), source=0.0_dp)
+  allocate(K(nbf,nbf),    source=0.0_dp)
+  allocate(Kpow(nbf,nbf), source=0.0_dp)
+  allocate(Tmp(nbf,nbf),  source=0.0_dp)
 
-      istart = nocc_a +1 !merge(nocc_b+1, nocc_a+1, occ <= nocc_b)
-      do virt = istart, nbf
-        do occ = 1, nocc_a
-          idx = idx + 1
-          K(virt, occ) =  step(idx)
-          K(occ, virt) = -step(idx)
-        end do
-      end do
+  ! ---- Build skew-symmetric K from "step" (same as before) ----
+  istart = nocc_t + 1
+  do virt = istart, nbf
+    do occ = 1, nocc_t
+      idx = idx + 1
+      K(virt, occ) =  step(idx)
+      K(occ,  virt) = -step(idx)
+    end do
+  end do
 
-      G = 0.0_dp
-      do i = 1, nbf
-        G(i,i) = 1.0_dp
-      end do
-      G = G + K
-      if (second_term) then
-        call dgemm('N','T', nbf, nbf, nbf, 1.0_dp, K, nbf, K, nbf, 0.0_dp, K2, nbf)
-        G = G + 0.5_dp * K2
-      end if
-!      call expm(nbf, K, nbf, G, nbf, info)
+  ! ---- Initialize G = I ----
+  G = 0.0_dp
+  do i = 1, nbf
+    G(i,i) = 1.0_dp
+  end do
 
-      deallocate(K, K2)
-    end subroutine exp_scaling
+  ! ---- First-order: G <- I + K (always) ----
+  G = G + K
+
+  if (higher_order) then
+    ! Accumulate higher Taylor terms up to max_order using BLAS
+    ! Start from K^1 already in hand; build K^m iteratively.
+    Kpow = K
+    coef = 1.0_dp
+    do m = 2, max_order
+      ! Kpow <- Kpow * K == K^m
+      call dgemm('N','N', nbf, nbf, nbf, 1.0_dp, Kpow, nbf, K, nbf, 0.0_dp, Tmp, nbf)
+      Kpow = Tmp
+      coef = coef / real(m, dp)           ! 1/m! (incrementally)
+      G = G + coef * Kpow
+    end do
+  end if
+
+  deallocate(Tmp, Kpow, K)
+end subroutine exp_scaling
+
+!    subroutine exp_scaling(G, step, idx, nocc_t, nbf, second_term)
+!!      use matrix_expm_mod, only: expm
+!      real(kind=dp), intent(out)     :: G(:,:)
+!      real(kind=dp), intent(in)      :: step(:)
+!      integer, intent(inout)         :: idx
+!      integer, intent(in)            :: nocc_t, nbf
+!
+!      real(kind=dp), allocatable     :: K(:,:), K2(:,:)
+!      integer                        :: occ, virt, istart, i
+!      logical, intent(inout)         :: second_term
+!      integer :: info
+!
+!      allocate(K(nbf,nbf), source=0.0_dp)
+!      allocate(K2(nbf,nbf), source=0.0_dp)
+!
+!      istart = nocc_t +1 !merge(nocc_b+1, nocc_a+1, occ <= nocc_b)
+!      do virt = istart, nbf
+!        do occ = 1, nocc_t
+!          idx = idx + 1
+!          K(virt, occ) =  step(idx)
+!          K(occ, virt) = -step(idx)
+!        end do
+!      end do
+!
+!      G = 0.0_dp
+!      do i = 1, nbf
+!        G(i,i) = 1.0_dp
+!      end do
+!      G = G + K
+!      if (second_term) then
+!        call dgemm('N','T', nbf, nbf, nbf, 1.0_dp, K, nbf, K, nbf, 0.0_dp, K2, nbf)
+!        G = G + 0.5_dp * K2
+!      end if
+!!      call expm(nbf, K, nbf, G, nbf, info)
+!
+!      deallocate(K, K2)
+!    end subroutine exp_scaling
 
     subroutine orthonormalize(G, nbf)
       real(kind=dp), intent(inout) :: G(:,:)
@@ -567,7 +634,7 @@ contains
     etot = infos%mol_energy%energy
   end function
 
-  subroutine get_fock(basis, infos, molgrid, fock_ao, mo_a_in, mo_b_in)
+  subroutine get_fock(basis, infos, molgrid, fock_ao, mo_a_in, mo_b_in, dens_in)
     use precision, only: dp
     use oqp_tagarray_driver
     use types, only: information
@@ -587,6 +654,7 @@ contains
     real(dp), pointer, intent(inout)        :: fock_ao(:,:)
     real(dp), intent(inout), optional :: mo_a_in(:,:)
     real(dp), intent(inout), optional :: mo_b_in(:,:)
+    real(kind=dp), intent(inout), optional :: dens_in(:,:)
 
     integer :: nbf, nbf_tri, nfocks, scf_type, nelec, nelec_a, nelec_b
     integer :: i, ii, ok
@@ -717,7 +785,13 @@ contains
     ! 6. Set density matrices
     pdmat(:,1) = dmat_a
     if (nfocks > 1) pdmat(:,2) = dmat_b
-
+    if (present(dens_in)) then
+        pdmat(:,1) = dens_in(:,1)
+        if (nfocks > 1) pdmat(:,2) = dens_in(:,2)
+    else
+        pdmat(:,1) = dmat_a
+        if (nfocks > 1) pdmat(:,2) = dmat_b
+    end if
     ! 8. --- FOCK BUILD ---
     call int2_driver%init(basis, infos)
     call int2_driver%set_screening()
@@ -785,7 +859,6 @@ contains
       call form_rohf_fock_b(pfock(:,1), pfock(:,2), mo_a, smat_full, nelec_a, nelec_b, nbf, vshift, work1, work2)
       pdmat(:,1) = pdmat(:,1) + pdmat(:,2)
     end if
-    call get_ab_initio_density(pdmat(:,1),mo_a,pdmat(:,2),mo_b,infos,basis)
 
     select case (scf_type)
     case (scf_rhf)
@@ -811,6 +884,7 @@ contains
 
     fock_ao(:,1) = pfock(:,1)
     infos%mol_energy%energy = etot
+    call int2_driver%clean()
 
   end subroutine get_fock
   !> @brief Forms the ROHF Fock matrix in the MO basis using the Guest-Saunders method.

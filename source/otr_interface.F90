@@ -13,6 +13,7 @@ module otr_interface
   use types, only:information
   use mod_dft_molgrid, only: dft_grid_t
   use basis_tools,      only: basis_set
+  use guess, only:get_ab_initio_density
   implicit none
 
   ! Module-level state for callbacks
@@ -69,7 +70,13 @@ contains
     max_iter = int(infos%control%maxit, kind=int32)
     conv_tol = infos%control%conv
     verbose  = int(3, kind=int32)
-    call get_fock(basis, infos_in, molgrid, fock_ao,mo_a,mo_b)
+    select case (infos%control%scftype)
+    case (1)
+      call get_fock(basis, infos_in, molgrid, fock_ao,mo_a)
+    case (2)
+      call get_fock(basis, infos_in, molgrid, fock_ao,mo_a,mo_b)
+    end select 
+
   end subroutine init_trah_solver
 
   subroutine run_trah_solver()
@@ -85,7 +92,7 @@ contains
 
     ! Call OpenTrustRegion solver
     call solver(p_update, p_obj, n_param, error, &
-                conv_tol=conv_tol, n_macro=max_iter, &
+!                conv_tol=conv_tol, n_macro=max_iter, &
                 verbose=verbose)! , logger=p_log)
     if (error) then
       write(*,*) 'OpenTrustRegion solver failed.'
@@ -135,10 +142,11 @@ contains
   function obj_func(kappa) result(val)
     real(dp), intent(in) :: kappa(:)
     real(dp)             :: val
-    real(dp), allocatable :: mo_tmp_a(:,:), mo_tmp_b(:,:)
+    real(dp), allocatable :: mo_tmp_a(:,:), mo_tmp_b(:,:),dens(:,:)
     type(basis_set), pointer :: basis
     basis => infos%basis
     allocate(mo_tmp_a(nbf,nbf))
+    allocate(dens(nbf*(nbf+1)/2,nfock))
     select case(infos%control%scftype)
     case (1)
       mo_tmp_a = mo_a
@@ -152,13 +160,14 @@ contains
       mo_tmp_b = mo_b
       call rotate_orbs_trah(infos, kappa(1:nvir_a*nocc_a), nbf, nocc_a, mo_a)
       call rotate_orbs_trah(infos, kappa(nvir_a*nocc_a+1:), nbf, nocc_b, mo_b)
-      call get_fock(basis, infos, molgrid, fock_ao, mo_a, mo_b)
+      call get_ab_initio_density(dens(:,1),mo_a,dens(:,2),mo_b,infos,basis)
+      call get_fock(basis, infos, molgrid, fock_ao, mo_a, mo_b,dens)
       val = compute_energy(infos)
       mo_a = mo_tmp_a
       mo_b = mo_tmp_b
       deallocate(mo_tmp_b)
     end select
-    deallocate(mo_tmp_a)
+    deallocate(mo_tmp_a,dens)
   end function obj_func
 
 

@@ -39,6 +39,8 @@ contains
     real(dp), intent(inout),  target :: mo_b_in(:,:)
     type(basis_set), pointer :: basis
     integer :: nvir
+    real(dp), allocatable :: dens(:,:)
+    allocate(dens(nbf*(nbf+1)/2,nfock))
 !    character(len=*), intent(in)          :: print_level
     ! Initialize module state
     infos   => infos_in
@@ -63,7 +65,7 @@ contains
       nfock = 2
     case (3) !ROHF
       nvir = min(nvir_a, nvir_b)
-      n_param = int((nocc_a * nvir_a) + (nocc_b * nvir_a), kind=int32)
+      n_param = int(nvir_a * (nocc_a - nocc_b) + (nocc_b * nvir_b), kind=int32)
       nfock = 2
     end select
 
@@ -75,7 +77,10 @@ contains
       call get_fock(basis, infos_in, molgrid, fock_ao,mo_a)
     case (2)
       call get_fock(basis, infos_in, molgrid, fock_ao,mo_a,mo_b)
-    end select 
+    case (3)
+      mo_a = mo_b
+      call get_fock(basis, infos, molgrid, fock_ao, mo_a, mo_b, dens)
+    end select
 
   end subroutine init_trah_solver
 
@@ -103,8 +108,10 @@ contains
     real(dp), intent(in)                     :: kappa(:)
     real(dp), intent(out)                    :: func
     real(dp), intent(out)                    :: grad(:), h_diag(:)
+    real(dp), allocatable :: dens(:,:)
     procedure(hess_x_type), pointer, intent(out) :: hess_x_funptr
     type(basis_set), pointer :: basis
+    allocate(dens(nbf*(nbf+1)/2,nfock))
     basis => infos%basis
     ! Rotate orbitals
     select case (infos%control%scftype)
@@ -116,7 +123,14 @@ contains
     case (2)
       call rotate_orbs_trah(infos, kappa(1:nocc_a*nvir_a), nbf, nocc_a, mo_a)
       call rotate_orbs_trah(infos, kappa(nocc_a*nvir_a+1:), nbf, nocc_b, mo_b)
-      call get_fock(basis, infos, molgrid, fock_ao, mo_a, mo_b)
+      call get_ab_initio_density(dens(:,1),mo_a,dens(:,2),mo_b,infos,basis)
+      call get_fock(basis, infos, molgrid, fock_ao, mo_a, mo_b, dens)
+      call calc_g_h(grad, h_diag, fock_ao, mo_a, nbf, nocc_a, infos%control%scftype, mo_b, nocc_b)
+    case (3)
+      call rotate_orbs_trah(infos, kappa(1:nocc_a*nvir_a), nbf, nocc_a, mo_a)
+      call rotate_orbs_trah(infos, kappa(nocc_a*nvir_a+1:), nbf, nocc_b, mo_b)
+      call get_ab_initio_density(dens(:,1),mo_a,dens(:,2),mo_b,infos,basis)
+      call get_fock(basis, infos, molgrid, fock_ao, mo_a, mo_b, dens)
       call calc_g_h(grad, h_diag, fock_ao, mo_a, nbf, nocc_a, infos%control%scftype, mo_b, nocc_b)
     end select
     func = compute_energy(infos)
@@ -176,6 +190,6 @@ contains
     implicit none
     character(*), intent(in) :: message
     write(IW, "(A)") trim(message)
-  end subroutine 
+  end subroutine
 
 end module otr_interface

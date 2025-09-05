@@ -21,11 +21,13 @@ contains
     real(dp), intent(inout)  :: mo_a(nbf,nbf)     ! MO coefficient matrix
     real(dp), intent(inout), optional  :: mo_b(nbf,nbf)     ! MO coefficient matrix
 
-    integer :: nvir, i, a, k
+    integer :: nvir_a, nvir_b, i, a, k, k_rohf
     real(dp), allocatable :: work1(:,:), work2(:,:), work3(:,:)
+    real(dp), allocatable :: ugd(:), uh(:)
 
     ! dimensions
-    nvir = nbf - nocc_a
+    nvir_a = nbf - nocc_a
+    nvir_b = nbf - nocc_b
 
     allocate(work1(nbf,nbf))
     allocate(work2(nbf,nbf))
@@ -127,6 +129,81 @@ contains
           h_diag(k) = ( work3(i,i) - work3(a,a) )
         end do
       end do
+    case (3)
+      ! unpack the AO Beta fock matrix
+      allocate(ugd(nocc_a * nvir_a + nocc_b * nvir_b))
+      allocate(uh(nocc_a * nvir_a + nocc_b * nvir_b))
+      call unpack_matrix(fock_ao(:,1), work1)
+      work2 = 0.0_dp
+      work3 = 0.0_dp
+      call dgemm('N','N', nbf, nbf, nbf, &
+                 1.0_dp, work1, nbf,      &
+                         mo_a, nbf, &
+                 0.0_dp, work2, nbf)
+
+      ! foo(i,a) = ∑_μ C(μ,i)^T · work2(μ,a)
+      call dgemm('T','N', nbf, nbf, nbf, &
+                 1.0_dp, mo_a, nbf, &
+                         work2,         nbf, &
+                 0.0_dp, work3,nbf)
+
+      k = 0
+      do i = nocc_a +1, nbf
+        do a = 1, nocc_a
+          k= k+1
+          ugd(k) =  work3(i,a)
+        end do
+      end do
+
+      k = 0
+      do i = nocc_a +1, nbf
+        do a = 1, nocc_a
+          k= k+1
+          uh(k) = ( work3(i,i) - work3(a,a) )
+        end do
+      end do
+      ! unpack the Beta fock matrix
+      call unpack_matrix(fock_ao(:,2), work1)
+      work2 = 0.0_dp
+      work3 = 0.0_dp
+      call dgemm('N','N', nbf, nbf, nbf, &
+                 1.0_dp, work1, nbf,      &
+                         mo_b, nbf, &
+                 0.0_dp, work2, nbf)
+
+      ! foo(i,a) = ∑_μ C(μ,i)^T · work2(μ,a)
+      call dgemm('T','N', nbf, nbf, nbf, &
+                 1.0_dp, mo_b, nbf, &
+                         work2,         nbf, &
+                 0.0_dp, work3,nbf)
+
+      k = (nbf-nocc_a) * nocc_a
+      do i = nocc_b +1, nbf
+        do a = 1, nocc_b
+          k= k+1
+          ugd(k) =   work3(i,a)
+        end do
+      end do
+
+      k = (nbf-nocc_a) * nocc_a
+      do i = nocc_b +1, nbf
+        do a = 1, nocc_b
+          k= k+1
+          uh(k) = ( work3(i,i) - work3(a,a) )
+        end do
+      end do
+
+      grad = 0
+      k = nocc_b * (nvir_b - nvir_a)
+      k_rohf   = k + nvir_a*nocc_a
+      grad(1:nvir_b*nocc_b) = ugd(nvir_a*nocc_a+1:)
+      grad(k+1:k_rohf) = grad(k+1:k_rohf) + ugd(1:nvir_a*nocc_a)
+
+      h_diag = 0
+      k = nocc_b * (nvir_b - nvir_a)
+      k_rohf   = k + nvir_a*nocc_a
+      h_diag(1:nvir_b*nocc_b) = uh(nvir_a*nocc_a+1:)
+      h_diag(k+1:k_rohf) = h_diag(k+1:k_rohf) + uh(1:nvir_a*nocc_a)
     end select
     deallocate(work1, work2, work3)
 
@@ -173,7 +250,7 @@ contains
     ! Initialize ERI calculations
     call int2_driver%init(basis, infos)
     call int2_driver%set_screening()
-    
+
     select case (infos%control%scftype)
     case (1)
       int2_data = int2_rhf_data_t(nfocks=1, d=d, scale_exchange=scalefactor)
@@ -479,6 +556,149 @@ contains
         end do
       end do
 
+      !#################### ROHF
+    case (scf_rohf)
+! alpha
+      k = nocc_b * (nvir_b - nvir_a)
+      do i = 1, nvir_a
+        do a = 1, nocc_a
+          k= k+1
+          xmat(i,a) = x(k)
+        end do
+      end do
+      call unpack_matrix(fock_ao(:,1), work1)
+
+      call dgemm('N','N', nbf, nbf, nbf, &
+                 1.0_dp, work1, nbf,      &
+                         mo, nbf, &
+                 0.0_dp, work2, nbf)
+      call dgemm('T','N', nbf, nbf, nbf, &
+                 1.0_dp, mo, nbf, &
+                         work2,         nbf, &
+                 0.0_dp, work3,nbf)
+       foo = work3(1:nocc_a,1:nocc_a)
+       fvv = work3(nocc_a+1:nbf,nocc_a+1:nbf)
+
+
+      call dgemm('N','N', nvir_a, nocc_a, nvir_a, &
+                 1.0_dp, fvv,  nvir_a, &
+                         xmat, nvir_a, &
+                 0.0_dp, x2mat, nvir_a)
+      call dgemm('N','N', nvir_a, nocc_a, nocc_a, &
+                -1.0_dp, xmat, nvir_a, &
+                          foo, nocc_a, &
+                 1.0_dp, x2mat, nvir_a)
+
+      dm = 0.0_dp
+      work2 = 0
+      call dgemm('N','N', nbf, nocc_a, nvir_a, &
+                 1.0_dp, mo(:, nocc_a+1:nbf), nbf, &
+                         xmat,             nvir_a, &
+                0.0_dp, work2,          nbf)
+      call dgemm('N','T', nbf, nbf, nocc_a, &
+                 1.0_dp, work2,          nbf, &
+                         mo(:, 1:nocc_a),   nbf, &
+                 0.0_dp, work3,          nbf)
+      do i = 1, nbf
+        do a = 1, nbf
+          dm(i,a) = work3(i,a) + work3(a,i)
+        end do
+      end do
+      call pack_matrix(dm,dm_tri(:,1))
+
+! beta
+      k = 0
+      do i = 1, nvir_b
+        do a = 1, nocc_b
+          k= k+1
+          xmat_b(i,a) = x(k)
+        end do
+      end do
+      call unpack_matrix(fock_ao(:,2), work1)
+
+      call dgemm('N','N', nbf, nbf, nbf, &
+                 1.0_dp, work1, nbf,      &
+                         mo_b, nbf, &
+                 0.0_dp, work2, nbf)
+      call dgemm('T','N', nbf, nbf, nbf, &
+                 1.0_dp, mo_b, nbf, &
+                         work2,         nbf, &
+                 0.0_dp, work3,nbf)
+      foo_b = work3(1:nocc_b,1:nocc_b)
+      fvv_b = work3(nocc_b+1:nbf,nocc_b+1:nbf)
+
+      call dgemm('N','N', nvir_b, nocc_b, nvir_b, &
+                 1.0_dp, fvv_b,  nvir_b, &
+                         xmat_b, nvir_b, &
+                 0.0_dp, x2mat_b, nvir_b)
+      call dgemm('N','N', nvir_b, nocc_b, nocc_b, &
+                -1.0_dp, xmat_b, nvir_b, &
+                          foo_b, nocc_b, &
+                 1.0_dp, x2mat_b, nvir_b)
+
+      dm = 0.0_dp
+      work2 = 0
+      call dgemm('N','N', nbf, nocc_b, nvir_b, &
+                 1.0_dp, mo_b(:, nocc_b+1:nbf), nbf, &
+                         xmat_b,             nvir_b, &
+                0.0_dp, work2,          nbf)
+      call dgemm('N','T', nbf, nbf, nocc_b, &
+                 1.0_dp, work2,          nbf, &
+                         mo_b(:, 1:nocc_b),   nbf, &
+                 0.0_dp, work3,          nbf)
+      do i = 1, nbf
+        do a = 1, nbf
+          dm(i,a) = work3(i,a) + work3(a,i)
+        end do
+      end do
+
+      call pack_matrix(dm,dm_tri(:,2))
+! end of dm calculation
+      call fock_jk(infos%basis, dm_tri, pfock, scalefactor, infos)
+! alpha x2mat
+      call unpack_matrix(pfock(:,1), v)
+      work2 = 0
+      call dgemm('T','N', nbf, nbf, nbf, &
+                 1.0_dp, mo, nbf, &
+                         v ,             nbf, &
+                 0.0_dp, work2,          nbf)
+      work3 = 0
+      call dgemm('N','N', nbf, nbf, nbf, &
+                 1.0_dp, work2, nbf, &
+                         mo, nbf, &
+                 0.0_dp, work3,  nbf)
+      x2mat = x2mat + work3(nocc_a+1:,1:nocc_a)
+
+! beta x2mat
+      call unpack_matrix(pfock(:,2), v)
+      work2 = 0
+      call dgemm('T','N', nbf, nbf, nbf, &
+                 1.0_dp, mo_b, nbf, &
+                         v ,             nbf, &
+                 0.0_dp, work2,          nbf)
+      work3 = 0
+      call dgemm('N','N', nbf, nbf, nbf, &
+                 1.0_dp, work2, nbf, &
+                         mo_b, nbf, &
+                 0.0_dp, work3,  nbf)
+      x2mat_b = x2mat_b + work3(nocc_b+1:,1:nocc_b)
+
+      k = 0
+      x2 = 0
+      do i = 1, nvir_b
+        do a = 1, nocc_b
+          k= k+1
+          x2(k) = x2mat_b(i,a)
+        end do
+      end do
+      k = nocc_b * (nvir_b - nvir_a)
+      do i = 1, nvir_a
+        do a = 1, nocc_a
+          k= k+1
+          x2(k) = x2(k) + x2mat(i,a)
+        end do
+      end do
+
     end select
 
     deallocate(foo,fvv,work1,work2,work3,dm,v,xmat,x2mat)
@@ -517,58 +737,58 @@ contains
 
   contains
 
-subroutine exp_scaling(G, step, idx, nocc_t, nbf, higher_order)
-  implicit none
-  integer,          intent(in)    :: nocc_t, nbf
-  real(kind=dp),    intent(out)   :: G(:,:)
-  real(kind=dp),    intent(in)    :: step(:)
-  integer,          intent(inout) :: idx
-  logical,          intent(in)    :: higher_order
+  subroutine exp_scaling(G, step, idx, nocc_t, nbf, higher_order)
+    implicit none
+    integer,          intent(in)    :: nocc_t, nbf
+    real(kind=dp),    intent(out)   :: G(:,:)
+    real(kind=dp),    intent(in)    :: step(:)
+    integer,          intent(inout) :: idx
+    logical,          intent(in)    :: higher_order
 
-  real(kind=dp), allocatable :: K(:,:), Kpow(:,:), Tmp(:,:)
-  integer :: occ, virt, istart, i, m
-  integer, parameter :: max_order = 6      ! increase to 8/10 if desired
-  real(kind=dp) :: coef
+    real(kind=dp), allocatable :: K(:,:), Kpow(:,:), Tmp(:,:)
+    integer :: occ, virt, istart, i, m
+    integer, parameter :: max_order = 6      ! increase to 8/10 if desired
+    real(kind=dp) :: coef
 
-  allocate(K(nbf,nbf),    source=0.0_dp)
-  allocate(Kpow(nbf,nbf), source=0.0_dp)
-  allocate(Tmp(nbf,nbf),  source=0.0_dp)
+    allocate(K(nbf,nbf),    source=0.0_dp)
+    allocate(Kpow(nbf,nbf), source=0.0_dp)
+    allocate(Tmp(nbf,nbf),  source=0.0_dp)
 
-  ! ---- Build skew-symmetric K from "step" (same as before) ----
-  istart = nocc_t + 1
-  do virt = istart, nbf
-    do occ = 1, nocc_t
-      idx = idx + 1
-      K(virt, occ) =  step(idx)
-      K(occ,  virt) = -step(idx)
+    ! ---- Build skew-symmetric K from "step" (same as before) ----
+    istart = nocc_t + 1
+    do virt = istart, nbf
+      do occ = 1, nocc_t
+        idx = idx + 1
+        K(virt, occ) =  step(idx)
+        K(occ,  virt) = -step(idx)
+      end do
     end do
-  end do
 
-  ! ---- Initialize G = I ----
-  G = 0.0_dp
-  do i = 1, nbf
-    G(i,i) = 1.0_dp
-  end do
-
-  ! ---- First-order: G <- I + K (always) ----
-  G = G + K
-
-  if (higher_order) then
-    ! Accumulate higher Taylor terms up to max_order using BLAS
-    ! Start from K^1 already in hand; build K^m iteratively.
-    Kpow = K
-    coef = 1.0_dp
-    do m = 2, max_order
-      ! Kpow <- Kpow * K == K^m
-      call dgemm('N','N', nbf, nbf, nbf, 1.0_dp, Kpow, nbf, K, nbf, 0.0_dp, Tmp, nbf)
-      Kpow = Tmp
-      coef = coef / real(m, dp)           ! 1/m! (incrementally)
-      G = G + coef * Kpow
+    ! ---- Initialize G = I ----
+    G = 0.0_dp
+    do i = 1, nbf
+      G(i,i) = 1.0_dp
     end do
-  end if
 
-  deallocate(Tmp, Kpow, K)
-end subroutine exp_scaling
+    ! ---- First-order: G <- I + K (always) ----
+    G = G + K
+
+    if (higher_order) then
+      ! Accumulate higher Taylor terms up to max_order using BLAS
+      ! Start from K^1 already in hand; build K^m iteratively.
+      Kpow = K
+      coef = 1.0_dp
+      do m = 2, max_order
+        ! Kpow <- Kpow * K == K^m
+        call dgemm('N','N', nbf, nbf, nbf, 1.0_dp, Kpow, nbf, K, nbf, 0.0_dp, Tmp, nbf)
+        Kpow = Tmp
+        coef = coef / real(m, dp)           ! 1/m! (incrementally)
+        G = G + coef * Kpow
+      end do
+    end if
+
+    deallocate(Tmp, Kpow, K)
+  end subroutine exp_scaling
 
 !    subroutine exp_scaling(G, step, idx, nocc_t, nbf, second_term)
 !!      use matrix_expm_mod, only: expm
@@ -855,10 +1075,10 @@ end subroutine exp_scaling
     end if
 
 
-    if (scf_type == scf_rohf) then
-      call form_rohf_fock_b(pfock(:,1), pfock(:,2), mo_a, smat_full, nelec_a, nelec_b, nbf, vshift, work1, work2)
-      pdmat(:,1) = pdmat(:,1) + pdmat(:,2)
-    end if
+!    if (scf_type == scf_rohf) then
+!      call form_rohf_fock_b(pfock(:,1), pfock(:,2), mo_a, smat_full, nelec_a, nelec_b, nbf, vshift, work1, work2)
+!      pdmat(:,1) = pdmat(:,1) + pdmat(:,2)
+!    end if
 
     select case (scf_type)
     case (scf_rhf)
@@ -873,13 +1093,12 @@ end subroutine exp_scaling
       fock_ao(:,1) = pfock(:,1)
       fock_ao(:,2) = pfock(:,2)
     case (scf_rohf)
-      fock_a = rohf_bak(:,1)
-      dmat_a = pdmat(:,1) - pdmat(:,2)
+      dmat_a = pdmat(:,1)
       dmat_b = pdmat(:,2)
       mo_b = mo_a
       mo_energy_b = mo_energy_a
-      fock_ao(:,1) = rohf_bak(:,1)
-      fock_ao(:,2) = rohf_bak(:,2)
+      fock_ao(:,1) = pfock(:,1)
+      fock_ao(:,2) = pfock(:,2)
     end select
 
     fock_ao(:,1) = pfock(:,1)

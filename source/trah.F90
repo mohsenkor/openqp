@@ -256,6 +256,8 @@ contains
       int2_data = int2_rhf_data_t(nfocks=1, d=d, scale_exchange=scalefactor)
     case (2)
       int2_data = int2_urohf_data_t(nfocks=2, d=d, scale_exchange=scalefactor)
+    case (3)
+      int2_data = int2_urohf_data_t(nfocks=2, d=d, scale_exchange=scalefactor)
     end select
 
 
@@ -340,6 +342,8 @@ contains
       allocate(xmat_b(nvir_b,nocc_b), x2mat_b(nvir_b,nocc_b))
 
     case (3)
+      allocate(foo_b(nocc_b,nocc_b), fvv_b(nvir_b,nvir_b))
+      allocate(xmat_b(nvir_b,nocc_b), x2mat_b(nvir_b,nocc_b))
       scf_type = scf_rohf
       nfocks = 2
     end select
@@ -705,64 +709,119 @@ contains
 
   end subroutine calc_h_op
 
-  subroutine rotate_orbs_trah(infos, step, nbf,nocc_a, mo)
+  subroutine unpack_x(infos, step, K, nocc)
+    use types,     only : information
+    use precision, only : dp
+    implicit none
+    class(information), intent(in)    :: infos
+    real(kind=dp),      intent(in)    :: step(:)
+    real(kind=dp),      intent(inout) :: K(:,:)
+    integer,            intent(in)    :: nocc
+
+    integer :: nbf, nocc_a, nocc_b, nvir_a, nvir_b, scftype
+    integer :: virt, occ, idx, expected
+
+    nbf     = infos%basis%nbf
+    nocc_a  = infos%mol_prop%nelec_a
+    nocc_b  = infos%mol_prop%nelec_b
+    nvir_a  = nbf - nocc_a
+    nvir_b  = nbf - nocc_b
+    scftype = infos%control%scftype
+
+    if (size(K,1) /= nbf .or. size(K,2) /= nbf) error stop "unpack_x: bad K dims"
+    if (nocc_a + nvir_a /= nbf) error stop "unpack_x: nocc_a+nvir_a != nbf"
+    if (nocc_b + nvir_b /= nbf) error stop "unpack_x: nocc_b+nvir_b != nbf"
+
+    K   = 0.0_dp
+    idx = 0
+
+    if (scftype == 3) then
+      expected = (nocc_a - nocc_b)*nocc_b + nvir_a*nocc_a
+      if (size(step) /= expected) error stop "unpack_x(ROHF): step length mismatch"
+      do virt = nocc_b+1, nocc_a
+        do occ = 1, nocc_b
+          idx = idx + 1
+          K(virt, occ) =  step(idx)
+          K(occ,  virt) = -step(idx)
+        end do
+      end do
+      do virt = nocc_a+1, nbf
+        do occ = 1, nocc_a
+          idx = idx + 1
+          K(virt, occ) =  step(idx)
+          K(occ,  virt) = -step(idx)
+        end do
+      end do
+    else
+      if (nocc < 0 .or. nocc > nbf) error stop "unpack_x: nocc out of range"
+      expected = (nbf - nocc) * nocc
+      if (size(step) /= expected) error stop "unpack_x: step length mismatch"
+      do virt = nocc+1, nbf
+        do occ = 1, nocc
+          idx = idx + 1
+          K(virt, occ) =  step(idx)
+          K(occ,  virt) = -step(idx)
+        end do
+      end do
+    end if
+
+    if (idx /= size(step)) error stop "unpack_x: not all elements consumed"
+  end subroutine unpack_x
+
+
+
+
+
+  subroutine rotate_orbs_trah(infos, step, nbf, nocc, mo)
     use types, only : information
     use oqp_tagarray_driver
     implicit none
 
     class(information), intent(inout), target :: infos
     real(kind=dp), intent(in)        :: step(:)
-    integer, intent(in)              :: nbf,nocc_a
+    integer, intent(in)              :: nbf,nocc
     real(kind=dp), intent(inout)     :: mo(:,:)
     real(kind=dp), allocatable       :: work_1(:,:), work_2(:,:)
     real(kind=dp), contiguous, pointer :: mo_a(:,:), mo_b(:,:)
-    integer            :: i, idx
+    real(kind=dp), allocatable :: K(:,:)
+    integer            :: i, idx, occ, virt, istart
     logical :: second_term
 
+    allocate(K(nbf,nbf),    source=0.0_dp)
     allocate(work_1(nbf,nbf),work_2(nbf,nbf))
     work_1 = 0
     work_2 = 0
     idx = 0
     second_term = .true.
+    ! ---- Build skew-symmetric K from "step" (same as before) ----
+    call unpack_x(infos, step, K, nocc)
+
     if (infos%control%scftype == 3) then! ROHF
       second_term = .false.
+
     end if
-    call exp_scaling(work_1, step, idx, nocc_a, nbf, second_term)
+    call exp_scaling(work_1, K, second_term)
 
     call orthonormalize(work_1, nbf)
     call dgemm('N','N', nbf, nbf, nbf, 1.0_dp, mo, nbf, work_1, nbf, 0.0_dp, work_2, nbf)
     mo = work_2
- !   mo_a = mo
-
 
   contains
 
-  subroutine exp_scaling(G, step, idx, nocc_t, nbf, higher_order)
+  subroutine exp_scaling(G, K, higher_order)
     implicit none
-    integer,          intent(in)    :: nocc_t, nbf
     real(kind=dp),    intent(out)   :: G(:,:)
-    real(kind=dp),    intent(in)    :: step(:)
-    integer,          intent(inout) :: idx
+    real(kind=dp),    intent(in)    :: K(:,:)
     logical,          intent(in)    :: higher_order
 
-    real(kind=dp), allocatable :: K(:,:), Kpow(:,:), Tmp(:,:)
-    integer :: occ, virt, istart, i, m
+    real(kind=dp), allocatable :: Kpow(:,:), Tmp(:,:)
+    integer :: i, m
     integer, parameter :: max_order = 6      ! increase to 8/10 if desired
     real(kind=dp) :: coef
 
-    allocate(K(nbf,nbf),    source=0.0_dp)
+!    allocate(K(nbf,nbf),    source=0.0_dp)
     allocate(Kpow(nbf,nbf), source=0.0_dp)
     allocate(Tmp(nbf,nbf),  source=0.0_dp)
-
-    ! ---- Build skew-symmetric K from "step" (same as before) ----
-    istart = nocc_t + 1
-    do virt = istart, nbf
-      do occ = 1, nocc_t
-        idx = idx + 1
-        K(virt, occ) =  step(idx)
-        K(occ,  virt) = -step(idx)
-      end do
-    end do
 
     ! ---- Initialize G = I ----
     G = 0.0_dp
@@ -787,7 +846,7 @@ contains
       end do
     end if
 
-    deallocate(Tmp, Kpow, K)
+    deallocate(Tmp, Kpow)
   end subroutine exp_scaling
 
 !    subroutine exp_scaling(G, step, idx, nocc_t, nbf, second_term)

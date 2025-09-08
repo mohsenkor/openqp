@@ -127,8 +127,8 @@ contains
       call get_fock(basis, infos, molgrid, fock_ao, mo_a, mo_b, dens)
       call calc_g_h(grad, h_diag, fock_ao, mo_a, nbf, nocc_a, infos%control%scftype, mo_b, nocc_b)
     case (3)
-      call rotate_orbs_trah(infos, kappa(1:nocc_a*nvir_a), nbf, nocc_a, mo_a)
-      call rotate_orbs_trah(infos, kappa(nocc_a*nvir_a+1:), nbf, nocc_b, mo_b)
+      call rotate_orbs_trah(infos, kappa, nbf, nocc_b, mo_a)
+      mo_b = mo_a
       call get_ab_initio_density(dens(:,1),mo_a,dens(:,2),mo_b,infos,basis)
       call get_fock(basis, infos, molgrid, fock_ao, mo_a, mo_b, dens)
       call calc_g_h(grad, h_diag, fock_ao, mo_a, nbf, nocc_a, infos%control%scftype, mo_b, nocc_b)
@@ -147,6 +147,9 @@ contains
     case (1)
       call calc_h_op(infos, fock_ao, x, hx, mo_a)
     case (2)
+      call calc_h_op(infos, fock_ao, x, hx, mo_a, mo_b)
+    case (3)
+      mo_a = mo_b
       call calc_h_op(infos, fock_ao, x, hx, mo_a, mo_b)
     end select
     hx = 2.0_dp * hx
@@ -179,6 +182,17 @@ contains
       val = compute_energy(infos)
       mo_a = mo_tmp_a
       mo_b = mo_tmp_b
+      deallocate(mo_tmp_b)
+    case (3)
+      allocate(mo_tmp_b(nbf,nbf))
+      mo_tmp_a = mo_a
+      mo_tmp_b = mo_b
+      call rotate_orbs_trah(infos, kappa, nbf, nocc_a, mo_a)
+      call get_ab_initio_density(dens(:,1),mo_a,dens(:,2),mo_b,infos,basis)
+      call get_fock(basis, infos, molgrid, fock_ao, mo_a, mo_b,dens)
+      val = compute_energy(infos)
+      mo_a = mo_tmp_a
+      mo_b = mo_a
       deallocate(mo_tmp_b)
     end select
     deallocate(mo_tmp_a,dens)

@@ -15,6 +15,109 @@ module qmmm_mod
 
   contains
 
+  subroutine add_potqm_contributions(infos, dens, h1e, smat, potqm, logtol)
+    use precision, only: dp
+    use basis_tools, only: basis_set
+    use types, only: information
+    use messages, only: show_message, with_abort
+    use int1, only: omp_qmmm
+    use mathlib, only : traceprod_sym_packed
+    implicit none
+
+    type(information), target, intent(inout) :: infos
+    real(dp), contiguous, intent(in)    :: dens(:)
+    real(dp), contiguous, intent(inout) :: h1e(:)
+    real(dp), contiguous, intent(in)    :: smat(:)
+    real(dp), contiguous, intent(in)    :: potqm(:,:)
+    real(dp), intent(in)                :: logtol
+
+    type(basis_set), pointer :: basis
+    integer :: nbf, nbf2, nat, npt, nptcur, ok
+    integer :: i
+    real(dp), allocatable :: xyz(:,:)
+    real(dp), target, allocatable :: ttt(:,:)
+    real(dp), pointer :: wn(:,:)
+    real(dp), allocatable :: chg_ops(:,:)
+    real(dp), allocatable :: sum_op(:)
+    real(dp), allocatable :: corr(:)
+    real(dp), allocatable :: q(:)
+    real(dp), allocatable :: v(:)
+    real(dp), allocatable :: dh(:)
+
+    integer, parameter :: nlayers = 4
+    real(dp), parameter :: &
+      layers(nlayers)    = [1.4_dp, 1.6_dp, 1.8_dp, 2.0_dp]
+    integer, parameter :: npt_layer(nlayers) = [132,152,192,350]
+    integer, parameter :: typ_layer(nlayers) = [3,3,3,0]
+
+    ! --- basic sizes ---
+    basis => infos%basis
+    basis%atoms => infos%atoms
+
+    nbf  = basis%nbf
+    nbf2 = nbf*(nbf+1)/2
+    nat  = ubound(infos%atoms%zn, 1)
+    npt  = nat * sum(npt_layer)
+
+
+    allocate(xyz(npt,3), ttt(nat,npt), &
+             chg_ops(nbf2,nat), sum_op(nbf2), corr(nbf2), &
+             q(nat), v(nat), dh(nbf2), stat=ok)
+    if (ok /= 0) call show_message('Cannot allocate memory in add_potqm_contributions', WITH_ABORT)
+
+    ! Build ESPF grid & weights (same as form_espf_grid used elsewhere)
+    call form_espf_grid(nat, npt, nlayers, layers, npt_layer, typ_layer, &
+                        infos%atoms%zn, infos%atoms%xyz, xyz, ttt, nptcur)
+
+    wn => ttt(:,:nptcur)
+
+    ! Build per-atom ESPF operators O_i
+    !    chg_ops(:,i)  ~  espf_op[i,μν]
+    sum_op(:) = 0.0_dp
+    do i = 1, nat
+       chg_ops(:,i) = 0.0_dp
+       call omp_qmmm( &
+            basis,                        &
+            i,                            &
+            transpose(xyz(1:nptcur,:)),   &
+            wn,                           &
+            chg_ops(:,i),                 & ! packed operator for atom i
+            nat,                          &
+            logtol = logtol )
+
+       sum_op(:) = sum_op(:) + chg_ops(:,i)
+    end do
+
+    !    espf_op_corr[i] = espf_op[i] - ( Σ_i espf_op[i] - S ) / nat
+
+    corr(:) = (sum_op(:) - smat(:)) / real(nat, dp)
+
+    do i = 1, nat
+       chg_ops(:,i) = chg_ops(:,i) - corr(:)
+    end do
+
+    ! Compute ESP charges q(i) = Tr(D * O_i)  (like Python q(i))
+
+    q(:) = 0.0_dp
+    do i = 1, nat
+       q(i) = traceprod_sym_packed(dens, chg_ops(:,i), nbf)
+    end do
+
+    ! Apply Ewald pair potential: V = potqm · q
+
+    v = matmul(potqm, q)   ! size (nat)
+
+    ! Build Δh = - Σ_i V(i) * O_i^corr and add to h1e
+
+    dh(:) = 0.0_dp
+    do i = 1, nat
+       dh(:) = dh(:) - v(i) * chg_ops(:,i)
+    end do
+
+    h1e(:) = h1e(:) + dh(:)
+
+  end subroutine add_potqm_contributions
+
 !> @brief Compute the MM and atomic QM/MM contributions to energy
 !
 !> @detail Classical contributions to energy and the QM atomic charge times MM potential

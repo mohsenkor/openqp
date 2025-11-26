@@ -12,15 +12,7 @@ from oqp.library.libdlfind import DLFindMin, DLFindTS, DLFindMECI, DLFindQMMM
 from oqp.library.libopenmm import QMMM_MD 
 
 
-def prep_guess(mol):
-    oqp.library.ints_1e(mol)
-    oqp.library.guess(mol)
-
-
 def compute_energy(mol):
-    # prepare guess orbital
-    prep_guess(mol)
-
     # compute energy
     SinglePoint(mol).energy()
 
@@ -52,9 +44,6 @@ def compute_scf_prop(mol):
 
 
 def compute_grad(mol):
-    # prepare guess orbital
-    prep_guess(mol)
-
     # compute energy
     SinglePoint(mol).energy()
 
@@ -62,6 +51,7 @@ def compute_grad(mol):
     Gradient(mol).gradient()
 
     # compute properties
+    compute_scf_prop(mol)
     if mol.config['input']['qmmm_flag']:
        oqp.resp_charges(mol)
 
@@ -78,9 +68,6 @@ def compute_md(mol):
     qmmm_md.run_md()
 
 def compute_nacme(mol):
-    # prepare guess orbital
-    prep_guess(mol)
-
     # compute reference energy
     sp = SinglePoint(mol)
     ref_energy = sp.reference()
@@ -99,9 +86,6 @@ def compute_nacme(mol):
 
 
 def compute_nac(mol):
-    # prepare guess orbital
-    prep_guess(mol)
-
     # compute energy
     SinglePoint(mol).energy()
 
@@ -116,9 +100,6 @@ def compute_soc(mol):
 
 
 def compute_hess(mol):
-    # prepare guess orbital
-    prep_guess(mol)
-
     # compute energy
     SinglePoint(mol).energy()
 
@@ -134,20 +115,17 @@ def compute_thermo(mol):
 
 
 def compute_geom(mol):
-    # prepare guess orbital
-    prep_guess(mol)
-
     # initialize optimizer
     optimizer = get_optimizer(mol)
 
     # optimize coordinates
     optimizer.optimize()
 
+    # compute properties
+    compute_scf_prop(mol)
+
 
 def compute_properties(mol):
-    # prepare guess orbital
-    prep_guess(mol)
-
     # compute reference energy
     sp = SinglePoint(mol)
     ref_energy = sp.reference()
@@ -181,9 +159,6 @@ def compute_properties(mol):
         pass
 
 def compute_data(mol):
-    # prepare guess orbital
-    prep_guess(mol)
-
     # compute reference energy
     SinglePoint(mol).energy()
 

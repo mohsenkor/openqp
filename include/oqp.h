@@ -15,6 +15,8 @@ typedef struct oqp_handle_t {
     struct tddft_parameters *tddft;
     struct control_parameters *control;
     struct mpi_communicator *mpiinfo;
+    struct electron_shell *elshell;
+    struct trah_control *trah;
 } oqp_handle_t;
 
 struct Cstring{
@@ -94,6 +96,10 @@ struct tddft_parameters {
     double spc_coco;
     double spc_ovov;
     double spc_coov;
+    int32_t* ixcore;
+    int64_t ixcore_len;
+    int64_t z_solver;
+    int64_t gmres_dim;
 };
 
 struct control_parameters {
@@ -101,6 +107,7 @@ struct control_parameters {
     int64_t   scftype;
     char      runtype[20];
     int64_t   guess;
+    int64_t   active_basis;
     int64_t   maxit;
     int64_t   maxit_dav;
     int64_t   maxit_zv;
@@ -114,7 +121,11 @@ struct control_parameters {
     double    vshift_cdiis_switch;
     double    vshift;
     bool      mom;
+    bool      pfon;
     double    mom_switch;
+    double    pfon_start_temp;
+    double    pfon_cooling_rate;
+    double    pfon_nsmear;
     double    conv;
     int64_t   scf_incremental;
     double    int2e_cutoff;
@@ -123,6 +134,22 @@ struct control_parameters {
     double    esp_constr;
     bool      basis_set_issue;
     double    conf_print_threshold;
+    bool      rstctmo;
+    int64_t   converger_type;
+    double    soscf_lvl_shift;
+    int64_t   soscf_reset_mod;
+    int64_t   soscf_mode;
+    int64_t   verbose;
+    bool      trh_stab;
+    bool      trh_ls;
+    bool      trh_dav;
+    bool      trh_jd;
+    bool      trh_pjd;
+    int64_t   trh_nrtv;
+    double    trh_r0;
+    int64_t   trh_nmic;
+    double    trh_gred;
+    double    trh_lred;
     bool     qmmm_flag;
 };
 
@@ -130,6 +157,20 @@ struct mpi_communicator {
         int32_t comm;
         bool debug_mode;
         bool usempi;
+};
+
+struct electron_shell {
+        int id;
+	int element_id;
+	int32_t ang_mom;
+	int32_t ecp_nam;
+	int* num_expo;
+	double* expo;
+	double* coef;
+        int* ecp_am;
+        int* ecp_rex;
+	double* ecp_coord;
+	int* ecp_zn;
 };
 
 oqp_handle_t *oqp_init();
@@ -150,10 +191,15 @@ void oqp_banner(struct oqp_handle_t *inf);
 
 void apply_basis(struct oqp_handle_t *inf);
 
+void append_shell(struct oqp_handle_t *inf);
+void append_ecp(struct oqp_handle_t *inf);
+
 void int1e(struct oqp_handle_t *inf);
 
 void guess_hcore(struct oqp_handle_t *inf);
 void guess_huckel(struct oqp_handle_t *inf);
+void guess_json(struct oqp_handle_t *inf);
+void proj_dm_newbas(struct oqp_handle_t *inf);
 
 void hf_energy(struct oqp_handle_t *inf);
 void hf_gradient(struct oqp_handle_t *inf);

@@ -61,9 +61,22 @@ class Molecule:
             'OQP::dc_matrix', 'OQP::nac_matrix',
             'OQP::hamiltonian_qmmm', 'OQP::mm_potential', 'OQP::charge_operator', 'OQP::partial_charges'
         ]
-
+        self.skip_tag = {"rhf": ['OQP::DM_B', 'OQP::FOCK_B', 'OQP::E_MO_B', 'OQP::VEC_MO_B'],
+                         "rohf": [],
+                         "uhf": []
+                         }
+        self.config_tag = {
+            'json': ['scf_type', 'basis', 'library']
+        }
         self.start_time = None
         self.back_door = None
+
+        for tag in self.tag:
+            name = tag.replace('OQP::', '').lower()
+            getter = lambda self, t=tag: np.array(self.data[t])
+            setter = lambda self, val, t=tag: self.data.__setitem__(t, val)
+            setattr(self.__class__, f'get_{name}', getter)
+            setattr(self.__class__, f'set_{name}', setter)
 
     def get_atoms(self):
         """
@@ -99,6 +112,96 @@ class Molecule:
             dtype=np.double)
 
         return copy.deepcopy(coord)
+    def get_scf_energy(self, component=None):
+        """
+        Retrieve SCF (Self-Consistent Field) energy components.
+
+        This method provides convenient access to individual or all energy
+        terms computed during an SCF procedure. If no component is specified,
+        the total SCF energy is returned.
+
+        Parameters
+        ----------
+        component : str, optional
+            The energy component to retrieve. Supported options are:
+
+            - ``None`` (default): Returns only the total SCF energy.
+            - ``"all"``: Returns a dictionary containing all available
+              energy components.
+            - One of the following component names:
+                * "energy"  — total SCF energy
+                * "psinrm"  — wavefunction norm
+                * "ehf1"    — Hartree-Fock energy (one-electron)
+                * "vee"     — electron-electron repulsion energy
+                * "nenergy" — nuclear energy contribution
+                * "vne"     — electron-nucleus attraction energy
+                * "vnn"     — nucleus-nucleus repulsion energy
+                * "vtot"    — total potential energy
+                * "tkin"    — kinetic energy
+                * "virial"  — virial ratio
+
+        Returns
+        -------
+        float or dict
+            - If `component` is None, returns a single float (total SCF energy).
+            - If `component` is "all", returns a dictionary with all energy components.
+            - If `component` corresponds to a specific component, returns that component as a float.
+
+        Raises
+        ------
+        ValueError
+            If the provided `component` does not match any of the known energy components.
+
+        Examples
+        --------
+        >>> mol.get_scf_energy()
+        -75.98327432
+
+        >>> mol.get_scf_energy("tkin")
+        37.420192
+
+        >>> mol.get_scf_energy("all")
+        {
+            'energy': -75.98327432,
+            'psinrm': 0.999999,
+            'ehf1': -72.3123,
+            'vee': 18.2034,
+            'nenergy': -80.000,
+            'vne': -85.6214,
+            'vnn': 5.6214,
+            'vtot': -67.4180,
+            'tkin': 37.4202,
+            'virial': 2.1519
+        }
+        """
+        energy_data = self.data._data.mol_energy
+
+        if component is None:
+            return energy_data.energy
+
+        elif component == "all":
+            return {
+                "energy": energy_data.energy,
+                "psinrm": energy_data.psinrm,
+                "ehf1": energy_data.ehf1,
+                "vee": energy_data.vee,
+                "nenergy": energy_data.nenergy,
+                "vne": energy_data.vne,
+                "vnn": energy_data.vnn,
+                "vtot": energy_data.vtot,
+                "tkin": energy_data.tkin,
+                "virial": energy_data.virial
+            }
+
+        else:
+            if hasattr(energy_data, component):
+                return getattr(energy_data, component)
+            else:
+                raise ValueError(
+                    f"Invalid component '{component}'. Use one of: "
+                    f"energy, psinrm, ehf1, vee, nenergy, vne, vnn, "
+                    f"vtot, tkin, virial, or 'all'."
+                )
 
     def get_grad(self):
         """
@@ -136,8 +239,11 @@ class Molecule:
         """
         Extract data from mol to dict
         """
+        scf_type = self.config['scf']['type']
         data = {}
         for key in self.tag:
+            if key in self.skip_tag[scf_type]:
+                continue
             try:
                 data[key] = np.array(self.data[key]).tolist()
 
@@ -324,6 +430,15 @@ class Molecule:
 
         return log_c
 
+    def set_config_json(self):
+        data = {}
+        data['json'] = {
+            'scf_type': self.config['scf']['type'],
+            'basis': self.config['input']['basis'],
+            'library': self.config['input']['library']
+        }
+        return data
+
     @mpi_dump
     def save_data(self):
         """
@@ -335,6 +450,7 @@ class Molecule:
             jsonfile = self.log.replace('.log', '.json')
         data = self.get_data()
         data.update(self.get_results())
+        data.update(self.set_config_json())
 
         with open(jsonfile, 'w') as outdata:
             json.dump(data, outdata, indent=2)
@@ -377,9 +493,23 @@ class Molecule:
             exit('loading data from json, the types of atoms does not match!')
 
         self.put_data(data)
+        self.update_config_json()
 
         if guess_geom:
             self.update_system(np.array(data['coord']))
+
+    def update_config_json(self):
+        # Update the configuration from JSON
+        config = self.config
+        if config['guess']['type'] != 'json':
+            return
+        if (config['input']['basis'] == config['json']['basis'] and
+                config['scf']['init_library'] == config['json']['library']):
+            return
+        self.config['json']['do_init'] = 'yes'
+        self.config['scf']['init_scf'] = self.config['json']['scf_type']
+        self.config['scf']['init_basis'] = self.config['json']['basis']
+        self.config['scf']['init_library'] = self.config['json']['library']
 
     def put_data(self, data):
         # convert list to data
@@ -389,6 +519,14 @@ class Molecule:
 
             except KeyError:
                 continue
+        for key in self.config_tag.keys():
+            for item in self.config_tag[key]:
+                try:
+                    self.config[key][item] = data[key][item]
+                except KeyError:
+                    print(f"Warning: Key {key} not found in data")
+                except Exception as e:
+                    print(f"Error: {e}")
 
     def read_freqs(self):
         jsonfile = self.log.replace('.log', '.hess.json')
@@ -417,7 +555,8 @@ class Molecule:
             'OQP::VEC_MO_A', 'OQP::VEC_MO_B',
             'OQP::td_abxc', 'OQP::td_bvec_mo', 'OQP::td_mrsf_density',
             'OQP::td_states_overlap', 'OQP::state_sign', 'OQP::td_states_phase',
-            'OQP::dc_matrix', 'OQP::nac_matrix',
+            'OQP::dc_matrix', 'OQP::nac_matrix', 'OQP::DM_A', 'OQP::DM_B', 'OQP::DM_B', 'E_MO_A', 'OQP::Hcore',
+            'OQP::SM', 'OQP::TM', 'OQP::FOCK_A', 'OQP::FOCK_B', 'OQP::E_MO_A', 'OQP::E_MO_B', 'OQP::WAO', 'json'
         ]
 
         if runtype in ['energy']:

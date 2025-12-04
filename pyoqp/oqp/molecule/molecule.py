@@ -202,6 +202,26 @@ class Molecule:
                     f"energy, psinrm, ehf1, vee, nenergy, vne, vnn, "
                     f"vtot, tkin, virial, or 'all'."
                 )
+    def get_atoms(self, prop=None):
+        """
+        Get atomic data.
+        Parameters
+        ----------
+        prop : str or None
+            If None, return full atomic data dict.
+            If a string, return that specific atomic property.
+            Available keys: 'natom', 'coords', 'charge', 'mass'
+        Returns
+        -------
+        dict or np.ndarray
+        """
+        data = self.data.atomic_data
+        if prop is None:
+            return data
+        if prop not in data:
+            raise KeyError(f"Unknown atomic property '{prop}'. "
+                           f"Available keys: {list(data.keys())}")
+        return data[prop]
 
     def get_grad(self):
         """

@@ -871,6 +871,12 @@ class OQPData:
     def set_system(self, system):
         """Set up atomic data"""
         num_atoms, x, y, z, q, mass = read_system(system)
+        self.atomic_data = {
+                     "natom": num_atoms,
+                     "coords": np.column_stack([x, y, z]),
+                     "charge": q,
+                     "mass": mass,
+                 }
         self._data.mol_prop.natom = num_atoms
         lib.oqp_set_atoms(self._data, num_atoms, x, y, z, q, mass)
 

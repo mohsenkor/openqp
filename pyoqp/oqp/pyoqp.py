@@ -76,11 +76,20 @@ class Runner:
         # initialize mol
         self.mol = Molecule(project, input_file, log, silent=silent)
         self.mol.usempi = usempi
+
         if input_dict:
             self.mol.load_config(input_dict)
         else:
             self.mol.load_config(input_file)
+        if self.mpi_manager.rank != 0:
+            if os.name == 'nt':  # Windows
+                log = 'NUL'
+            else:
+                log = '/dev/null'
+        else:
+            log = self.mol.log
 
+        self.mol.data["OQP::log_filename"] = log
         # check input values set default omp_num_threads
         check_input_values(self.mol.config)
 
@@ -89,6 +98,8 @@ class Runner:
 
         # Attach the starting time to mol
         self.mol.start_time = start_time
+        # Set up banner
+        oqp.oqp_banner(self.mol)
 
         dump_log(self.mol, title='', section='start')
 
@@ -99,20 +110,7 @@ class Runner:
         Args:
             test_mod (bool): Flag to run in test mode.
         """
-        # Set up logfile
 
-        if self.mpi_manager.rank != 0:
-            if os.name == 'nt':  # Windows
-                log = 'NUL'
-            else:
-                log = '/dev/null'
-        else:
-            log = self.mol.log
-
-        self.mol.data["OQP::log_filename"] = log
-
-        # Set up banner
-        oqp.oqp_banner(self.mol)
 
         # Get the run type from mol configuration
         run_type = self.mol.config["input"]["runtype"]

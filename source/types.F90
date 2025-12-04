@@ -144,7 +144,6 @@ module types
     integer(c_int64_t)     :: trh_nmic = 50         !< Max micro-iterations per macro step
     real(c_double)         :: trh_gred = 1.0d-3     !< Global trust-radius reduction factor (0<gred<1)
     real(c_double)         :: trh_lred = 1.0d-4     !< Local trust-radius reduction factor (0<lred<1)
-    real(c_double) :: conf_print_threshold = 5.0d-02             !< The threshold for configuration printout
     logical(c_bool) :: qmmm_flag = .false. !< QM/MM Flag
   end type control_parameters
 

@@ -12,111 +12,200 @@ module qmmm_mod
   public print_mm_energy
   public oqp_esp_qmmm
   public grad_esp_qmmm
+  public espf_op_corr
+  public add_potqm_contributions
 
   contains
 
-  subroutine add_potqm_contributions(infos, dens, h1e, smat, potqm, logtol)
-    use precision, only: dp
-    use basis_tools, only: basis_set
+  subroutine espf_op_corr_C(c_handle) bind(C, name="espf_op_corr")
+    use c_interop, only: oqp_handle_t, oqp_handle_get_info
     use types, only: information
+    type(oqp_handle_t) :: c_handle
+    type(information), pointer :: inf
+    inf => oqp_handle_get_info(c_handle)
+!    call form_esp_charges(inf)
+    call espf_op_corr(inf)
+  end subroutine espf_op_corr_C
+
+  subroutine form_esp_charges_C(c_handle) bind(C, name="form_esp_charges")
+    use c_interop, only: oqp_handle_t, oqp_handle_get_info
+    use types, only: information
+    type(oqp_handle_t) :: c_handle
+    type(information), pointer :: inf
+    inf => oqp_handle_get_info(c_handle)
+    call form_esp_charges(inf)
+  end subroutine form_esp_charges_C
+
+  subroutine grad_esp_qmmm_C(c_handle) bind(C, name="grad_esp_qmmm")
+    use c_interop, only: oqp_handle_t, oqp_handle_get_info
+    use types, only: information
+    type(oqp_handle_t) :: c_handle
+    type(information), pointer :: inf
+    inf => oqp_handle_get_info(c_handle)
+    call grad_esp_qmmm(inf)
+  end subroutine grad_esp_qmmm_C
+
+  subroutine espf_op_corr(infos)!,dmat,nbf)
+    use precision, only: dp
+    use oqp_tagarray_driver
+    use basis_tools, only: basis_set
     use messages, only: show_message, with_abort
+    use types, only: information
+    use strings, only: Cstring, fstring
     use int1, only: omp_qmmm
-    use mathlib, only : traceprod_sym_packed
+    use constants, only: tol_int
+    use mathlib, only: traceprod_sym_packed
     implicit none
 
-    type(information), target, intent(inout) :: infos
-    real(dp), contiguous, intent(in)    :: dens(:)
-    real(dp), contiguous, intent(inout) :: h1e(:)
-    real(dp), contiguous, intent(in)    :: smat(:)
-    real(dp), contiguous, intent(in)    :: potqm(:,:)
-    real(dp), intent(in)                :: logtol
+    character(len=*), parameter :: subroutine_name = "espf_op_corr"
 
+    integer :: nbf!, intent(in) :: nbf
+
+    type(information), target, intent(inout) :: infos
+
+    integer :: nat,nelec,nbf2,ok
     type(basis_set), pointer :: basis
-    integer :: nbf, nbf2, nat, npt, nptcur, ok
+    real(kind=dp), allocatable :: chg_op(:)
+    real(kind=dp), target, allocatable :: ttt(:,:), xyz(:,:)
+    real(kind=dp), pointer :: coord(:,:)
+    real(kind=dp), pointer :: wn(:,:)
+
+    integer :: npt, nptcur
     integer :: i
-    real(dp), allocatable :: xyz(:,:)
-    real(dp), target, allocatable :: ttt(:,:)
-    real(dp), pointer :: wn(:,:)
-    real(dp), allocatable :: chg_ops(:,:)
-    real(dp), allocatable :: sum_op(:)
-    real(dp), allocatable :: corr(:)
-    real(dp), allocatable :: q(:)
-    real(dp), allocatable :: v(:)
-    real(dp), allocatable :: dh(:)
+    real(kind=dp) :: chg
 
     integer, parameter :: nlayers = 4
-    real(dp), parameter :: &
-      layers(nlayers)    = [1.4_dp, 1.6_dp, 1.8_dp, 2.0_dp]
+    real(kind=dp), parameter :: &
+      layers(nlayers) = [1.4, 1.6, 1.8, 2.0]
     integer, parameter :: npt_layer(nlayers) = [132,152,192,350]
     integer, parameter :: typ_layer(nlayers) = [3,3,3,0]
+    real(kind=dp), allocatable :: sum_op(:), corr(:)
 
-    ! --- basic sizes ---
+    real(kind=dp) :: tol
+
+    real(kind=dp), contiguous, pointer :: dmat_a(:), dmat_b(:)
+    character(len=*), parameter :: tags_alpha(1) = &
+      (/ character(len=80) :: OQP_DM_A /)
+    character(len=*), parameter :: tags_beta(1) = &
+      (/ character(len=80) :: OQP_DM_B /)
+    !==============================================================================
+    ! Tag Arrays for Accessing Data
+    !==============================================================================
+    real(kind=dp), contiguous, pointer :: smat(:), chg_ops_corr(:,:)
+    character(len=*), parameter :: tags_general(1) = &
+      (/ character(len=80) :: OQP_SM /)
+    character(len=*), parameter :: tags(1) = &
+      (/ character(len=80) :: OQP_ESPF_CORR /)
+!   Load basis set
     basis => infos%basis
     basis%atoms => infos%atoms
 
-    nbf  = basis%nbf
+    nbf = basis%nbf
+!   Allocate memory
     nbf2 = nbf*(nbf+1)/2
-    nat  = ubound(infos%atoms%zn, 1)
-    npt  = nat * sum(npt_layer)
+    nat = ubound(infos%atoms%zn,1)
+    nelec = infos%mol_prop%nelec
+    npt = nat * sum(npt_layer)
 
+    allocate(xyz(npt,3), &
+             ttt(nat,npt), &
+             chg_op(nbf2), &
+             sum_op(nbf2), &
+             corr(nbf2), &
+             stat=ok)
+    if (ok /= 0) call show_message('Cannot allocate memory', WITH_ABORT)
 
-    allocate(xyz(npt,3), ttt(nat,npt), &
-             chg_ops(nbf2,nat), sum_op(nbf2), corr(nbf2), &
-             q(nat), v(nat), dh(nbf2), stat=ok)
-    if (ok /= 0) call show_message('Cannot allocate memory in add_potqm_contributions', WITH_ABORT)
+    call data_has_tags(infos%dat, tags_general, module_name, subroutine_name, WITH_ABORT)
+    call tagarray_get_data(infos%dat, OQP_SM, smat)
 
-    ! Build ESPF grid & weights (same as form_espf_grid used elsewhere)
-    call form_espf_grid(nat, npt, nlayers, layers, npt_layer, typ_layer, &
-                        infos%atoms%zn, infos%atoms%xyz, xyz, ttt, nptcur)
+    call infos%dat%reserve_data(OQP_ESPF_CORR, TA_TYPE_REAL64, nbf2*nat, (/ nbf2, nat /), comment=OQP_ESPF_CORR_comment)
+    call data_has_tags(infos%dat, tags, module_name, subroutine_name, WITH_ABORT)
+    call tagarray_get_data(infos%dat, OQP_ESPF_CORR, chg_ops_corr)
+
+    call form_espf_grid(nat,npt,nlayers,layers,npt_layer,typ_layer,infos%atoms%zn,infos%atoms%xyz,xyz,ttt,nptcur)
 
     wn => ttt(:,:nptcur)
-
-    ! Build per-atom ESPF operators O_i
-    !    chg_ops(:,i)  ~  espf_op[i,μν]
-    sum_op(:) = 0.0_dp
+    tol = log(10.0d0)*tol_int
+    sum_op = 0
     do i = 1, nat
-       chg_ops(:,i) = 0.0_dp
+       chg_ops_corr(:,i) = 0.0_dp
        call omp_qmmm( &
             basis,                        &
             i,                            &
             transpose(xyz(1:nptcur,:)),   &
             wn,                           &
-            chg_ops(:,i),                 & ! packed operator for atom i
+            chg_ops_corr(:,i),            &
             nat,                          &
-            logtol = logtol )
+            logtol = tol )
 
-       sum_op(:) = sum_op(:) + chg_ops(:,i)
+       sum_op(:) = sum_op(:) + chg_ops_corr(:,i)
     end do
 
-    !    espf_op_corr[i] = espf_op[i] - ( Σ_i espf_op[i] - S ) / nat
-
-    corr(:) = (sum_op(:) - smat(:)) / real(nat, dp)
+    corr(:) = (sum_op(:) + smat(:)) / real(nat, dp)
 
     do i = 1, nat
-       chg_ops(:,i) = chg_ops(:,i) - corr(:)
+       chg_ops_corr(:,i) = chg_ops_corr(:,i) - corr(:)
     end do
 
-    ! Compute ESP charges q(i) = Tr(D * O_i)  (like Python q(i))
+  end subroutine espf_op_corr
+
+  subroutine add_potqm_contributions(infos, dens, dh)
+    use precision,  only : dp
+    use basis_tools, only : basis_set
+    use types,      only : information
+    use messages,   only : show_message, with_abort
+    use mathlib,    only : traceprod_sym_packed
+    use oqp_tagarray_driver
+    implicit none
+
+    character(len=*), parameter :: subroutine_name = "add_potqm_contributions"
+    character(len=*), parameter :: module_name     = "qmmm_espf"  ! adjust if needed
+
+    type(information), target, intent(inout) :: infos
+    real(dp), contiguous, intent(in)        :: dens(:)
+    real(dp), contiguous, intent(inout)     :: dh(:)
+
+    type(basis_set), pointer :: basis
+    integer :: nbf, nbf2, nat, i, ok
+
+    real(dp), contiguous, pointer :: smat(:), potqm(:,:), chg_ops_corr(:,:)
+
+    real(dp), allocatable :: q(:)
+    real(dp), allocatable :: v(:)
+!    real(dp), allocatable :: dh(:)
+
+    character(len=*), parameter :: tags(3) = &
+         (/ character(len=80) :: OQP_SM, OQP_ESPF_CORR, OQP_POTQM /)
+
+    basis      => infos%basis
+    basis%atoms => infos%atoms
+
+    nbf  = basis%nbf
+    nbf2 = nbf*(nbf+1)/2
+    nat  = ubound(infos%atoms%zn, 1)
+
+    call data_has_tags(infos%dat, tags, module_name, subroutine_name, WITH_ABORT)
+    call tagarray_get_data(infos%dat, OQP_SM,        smat)
+    call tagarray_get_data(infos%dat, OQP_ESPF_CORR, chg_ops_corr)
+    call tagarray_get_data(infos%dat, OQP_POTQM,     potqm)
+
+    allocate(q(nat), v(nat), stat=ok)
+    if (ok /= 0) call show_message("Cannot allocate memory in add_potqm_contributions", WITH_ABORT)
 
     q(:) = 0.0_dp
     do i = 1, nat
-       q(i) = traceprod_sym_packed(dens, chg_ops(:,i), nbf)
+       q(i) = traceprod_sym_packed(dens, chg_ops_corr(:,i), nbf)
     end do
 
-    ! Apply Ewald pair potential: V = potqm · q
-
-    v = matmul(potqm, q)   ! size (nat)
-
-    ! Build Δh = - Σ_i V(i) * O_i^corr and add to h1e
+    v = matmul(potqm, q)
 
     dh(:) = 0.0_dp
     do i = 1, nat
-       dh(:) = dh(:) - v(i) * chg_ops(:,i)
+       dh(:) = dh(:) - v(i) * chg_ops_corr(:,i)
     end do
 
-    h1e(:) = h1e(:) + dh(:)
-
   end subroutine add_potqm_contributions
+
 
 !> @brief Compute the MM and atomic QM/MM contributions to energy
 !
@@ -267,7 +356,7 @@ module qmmm_mod
 !     REVISION HISTORY:
 !> @date _Oct, 2024_ Initial release
 
-  subroutine form_esp_charges(infos,dmat,nbf)
+  subroutine form_esp_charges(infos)!,dmat,nbf)
     use precision, only: dp
     use oqp_tagarray_driver
     use basis_tools, only: basis_set
@@ -281,8 +370,8 @@ module qmmm_mod
 
     character(len=*), parameter :: subroutine_name = "form_esp_charges"
 
-    integer, intent(in) :: nbf
-    real(kind=dp), intent(in) :: dmat(nbf*nbf)
+    integer :: nbf!, intent(in) :: nbf
+    real(kind=dp), allocatable  :: dmat(:)!(nbf*nbf)!, intent(in) :: dmat(nbf*nbf)
 
     type(information), target, intent(inout) :: infos
 
@@ -309,23 +398,45 @@ module qmmm_mod
 
     real(kind=dp) :: tol
 
-    if(.not.infos%control%qmmm_flag) return
+    real(kind=dp), contiguous, pointer :: dmat_a(:), dmat_b(:)
+    character(len=*), parameter :: tags_alpha(1) = &
+      (/ character(len=80) :: OQP_DM_A /)
+    character(len=*), parameter :: tags_beta(1) = &
+      (/ character(len=80) :: OQP_DM_B /)
+
 
 !   Load basis set
     basis => infos%basis
     basis%atoms => infos%atoms
 
+    nbf = basis%nbf
 !   Allocate memory
     nbf2 = nbf*(nbf+1)/2
     nat = ubound(infos%atoms%zn,1)
     nelec = infos%mol_prop%nelec
     npt = nat * sum(npt_layer)
 
+
+    call data_has_tags(infos%dat, tags_alpha, module_name, subroutine_name, WITH_ABORT)
+    call tagarray_get_data(infos%dat, OQP_DM_A, dmat_a)
+
+    ! Get beta-spin tag arrays if needed
+    if (infos%control%scftype > 1) then
+      call data_has_tags(infos%dat, tags_beta, module_name, subroutine_name, WITH_ABORT)
+      call tagarray_get_data(infos%dat, OQP_DM_B, dmat_b)
+    end if
+
     allocate(xyz(npt,3), &
              ttt(nat,npt), &
              chg_op(nbf2), &
+             dmat(nbf2), &
              stat=ok)
     if (ok /= 0) call show_message('Cannot allocate memory', WITH_ABORT)
+
+    dmat = dmat_a
+    if (infos%control%scftype > 1) then
+      dmat = dmat + dmat_b
+    end if
 
     call form_espf_grid(nat,npt,nlayers,layers,npt_layer,typ_layer,infos%atoms%zn,infos%atoms%xyz,xyz,ttt,nptcur)
 
@@ -338,17 +449,18 @@ module qmmm_mod
     call tagarray_get_data(infos%dat, OQP_partial_charges, partial_charges)
 
 ! Form partial charges and compute the correction for total charge
-    corr=nelec/nat
+    corr=0.0_dp!nelec/nat
+
     do i=1,nat
        call omp_qmmm(basis, i, transpose(xyz(1:nptcur,:)), wn, chg_op, nat, logtol=tol)
        chg = traceprod_sym_packed(dmat,chg_op,nbf)
        partial_charges(i) = infos%atoms%zn(i) + chg
-       corr = corr + chg/nat
+       corr = corr + partial_charges(i)
     end do
 
 ! Correct for the total charge
     do i=1,nat
-       partial_charges(i) = partial_charges(i) - corr
+       partial_charges(i) = partial_charges(i) + (infos%mol_prop%charge - corr)/nat
     end do
 
     return
@@ -457,7 +569,7 @@ module qmmm_mod
 !
 !     REVISION HISTORY:
 !> @date _Jul, 2024_ Initial release
-  subroutine grad_esp_qmmm(infos, dens, grad, logtol)
+  subroutine grad_esp_qmmm(infos)!, dens, grad, logtol)
     use oqp_tagarray_driver
     use precision, only: dp
     use basis_tools, only: basis_set
@@ -467,18 +579,19 @@ module qmmm_mod
     use grd1, only: grad_elpot, grad_ee_overlap
     use lebedev, only: lebedev_get_grid
     use elements, only: ELEMENTS_VDW_RADII
+    use constants, only: tol_int
     implicit none
 
     character(len=*), parameter :: subroutine_name = "grad_esp_qmmm"
 
     type(information), target, intent(inout) :: infos
-    real(kind=dp), intent(inout) :: grad(:,:)
-    real(kind=dp), intent(inout) :: dens(:)
-    real(kind=dp), intent(in) :: logtol
+!    real(kind=dp), intent(inout) :: grad(:,:)
+!    real(kind=dp), intent(inout) :: dens(:)
+    real(kind=dp) :: logtol
 
     integer :: nbf, nbf2, ok
     type(basis_set), pointer :: basis
-    real(kind=dp), allocatable :: wt(:)
+    real(kind=dp), allocatable :: wt(:), dens(:)
     real(kind=dp), allocatable :: xyz(:,:)
     real(kind=dp), target, allocatable :: ttt(:,:)
 
@@ -493,9 +606,13 @@ module qmmm_mod
 
 !tagarray
     real(kind=dp), contiguous, pointer :: partial_charges(:), mm_potential(:),&
-                                          gradient_mm(:,:)
-    character(len=*), parameter :: tags_qmmm(3) = (/ character(len=80) :: &
-      OQP_partial_charges, OQP_mm_potential, OQP_mm_gradient/)
+                                          espf_grad_ta(:,:), &
+                                          dmat_a(:), dmat_b(:)
+    character(len=*), parameter :: tags_qmmm(4) = (/ character(len=80) :: &
+      OQP_partial_charges, OQP_POTMM, OQP_ESPF_GRAD, OQP_DM_A/)
+
+    character(len=*), parameter :: tags_beta(1) = (/ character(len=80) :: &
+      OQP_DM_B/)
 
     real(kind=dp) :: mm_pot_av
 
@@ -509,9 +626,11 @@ module qmmm_mod
     nat = ubound(infos%atoms%zn, 1)
     npt = nat * sum(npt_layer)
 
+    logtol = log(10.0d0)*tol_int
     allocate(xyz(npt,3), &
              wt(npt), &
              ttt(nat,npt), &
+             dens(nbf2), &
              stat=ok)
     if (ok /= 0) call show_message('Cannot allocate memory', WITH_ABORT)
 
@@ -519,13 +638,24 @@ module qmmm_mod
 
 ! ESP gradient contribution
 !   Tagarray
+    call infos%dat%reserve_data(OQP_ESPF_GRAD, TA_TYPE_REAL64, nat*3, (/ 3, nat /), comment=OQP_ESPF_GRAD_comment)
     call data_has_tags(infos%dat, tags_qmmm, module_name, subroutine_name, WITH_ABORT)
-    call tagarray_get_data(infos%dat, OQP_mm_potential, mm_potential)
+    call tagarray_get_data(infos%dat, OQP_POTMM, mm_potential)
     call tagarray_get_data(infos%dat, OQP_partial_charges, partial_charges)
-    call tagarray_get_data(infos%dat, OQP_mm_gradient, gradient_mm)
+    call tagarray_get_data(infos%dat, OQP_DM_A, dmat_a)
+    call tagarray_get_data(infos%dat, OQP_ESPF_GRAD, espf_grad_ta)
+   ! Get beta-spin tag arrays if needed
+    if (infos%control%scftype > 1) then
+      call data_has_tags(infos%dat, tags_beta, module_name, subroutine_name, WITH_ABORT)
+      call tagarray_get_data(infos%dat, OQP_DM_B, dmat_b)
+    end if
 
+    espf_grad_ta = 0.0_dp
+    dens = dmat_a
+    if (infos%control%scftype > 1) then
+      dens =  dmat_b
+    end if
 ! Compute integrals and form ESP operators
-
 !   Compute the corrected mm potential
     mm_pot_av = sum(mm_potential)/nat
     do i=1,nat
@@ -535,13 +665,13 @@ module qmmm_mod
 !   Add integral gradient term, mm_potential*[(T^+T)^-1*T^+]*V^x
     do i=1,nptcur
        wt(i)=-dot_product(ttt(:,i),mm_potential)
-       call grad_elpot(basis, xyz(i,:), wt(i), dens, grad)
+       call grad_elpot(basis, xyz(i,:), wt(i), dens, espf_grad_ta)
     end do
 
 !   Add overlap derivative correction for the total charge conservation
     if(abs(mm_pot_av).gt.1.0e-6) then
        dens=-mm_pot_av*dens
-       call grad_ee_overlap(basis, dens, grad, logtol)
+       call grad_ee_overlap(basis, dens, espf_grad_ta, logtol)
        dens=-dens/mm_pot_av
     end if
 
@@ -554,12 +684,13 @@ module qmmm_mod
          wt=wt,&
          zn=infos%atoms%zn,&
          pchg=partial_charges,&
-         grad_mm=gradient_mm,&
-         grad=grad)
+         grad=espf_grad_ta)
+!    espf_grad = grad
 
 !   Restablish mm potential to the original one
     do i=1,nat
-       mm_potential(i)=-mm_pot_av-mm_potential(i)
+! it seems not to be:  mm_potential(i)= - mm_pot_av-mm_potential(i)
+       mm_potential(i)= mm_pot_av-mm_potential(i)
     end do
 
   end subroutine grad_esp_qmmm
@@ -579,31 +710,24 @@ module qmmm_mod
 !
 !     REVISION HISTORY:
 !> @date _Jul, 2024_ Initial release
-  subroutine espf_grad(x, y, z, at, wt, zn, pchg, grad_mm, grad)
+  subroutine espf_grad(x, y, z, at, wt, zn, pchg, grad)
     use precision, only: dp
     implicit none
 
     real(kind=dp), intent(in) :: x(:), y(:), z(:), at(:,:), zn(:)
     real(kind=dp), intent(inout) :: grad(:,:)
-    real(kind=dp), contiguous, intent(in) :: pchg(:), grad_mm(:,:)
+    real(kind=dp), contiguous, intent(in) :: pchg(:)
     real(kind=dp), intent(inout) :: wt(:)
-    real(kind=dp), target, allocatable :: gradient_mm(:,:)
+!    real(kind=dp), target, allocatable :: gradient_mm(:,:)
 
     integer :: i, j, nat, npts, dim1,dim2
 
     nat = ubound(at, 2)
     npts = ubound(x, 1)
 
-    dim1=ubound(grad_mm,1)
-    dim2=ubound(grad_mm,2)
-    allocate(gradient_mm(dim2,dim1))
-    gradient_mm=reshape(grad_mm, (/dim2,dim1/))
 
     ! Compute the matrix of the inverse distances
     do i = 1, nat
-      grad(1,i) = grad(1,i) + gradient_mm(1,i)
-      grad(2,i) = grad(2,i) + gradient_mm(2,i)
-      grad(3,i) = grad(3,i) + gradient_mm(3,i)
       do j = 1, npts
         grad(1,i) = grad(1,i) &
             + wt(j)*(pchg(i)-zn(i))*(at(1,i)-x(j))/norm2(at(:,i)-[x(j),y(j),z(j)])**3

@@ -216,7 +216,7 @@ contains
 !     Effective core potential gradient
       call grad_1e_ecp(infos, basis, xyz, dens, grad, logtol=tol)
 !     QM/MM force
-      if(infos%control%qmmm_flag) call grad_esp_qmmm(infos, dens, grad,logtol=tol)
+!      if(infos%control%qmmm_flag) call grad_esp_qmmm(infos, dens, grad,logtol=tol)
 
     end associate
 

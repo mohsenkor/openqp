@@ -146,6 +146,7 @@ module qmmm_mod
     do i = 1, nat
        chg_ops_corr(:,i) = chg_ops_corr(:,i) - corr(:)
     end do
+    deallocate(xyz, ttt, chg_op, sum_op, corr)
 
   end subroutine espf_op_corr
 
@@ -203,6 +204,7 @@ module qmmm_mod
     do i = 1, nat
        dh(:) = dh(:) - v(i) * chg_ops_corr(:,i)
     end do
+    deallocate(q, v)
 
   end subroutine add_potqm_contributions
 
@@ -462,8 +464,7 @@ module qmmm_mod
     do i=1,nat
        partial_charges(i) = partial_charges(i) + (infos%mol_prop%charge - corr)/nat
     end do
-
-    return
+    deallocate(xyz, ttt, chg_op, dmat)
 
   end subroutine form_esp_charges
 

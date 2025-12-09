@@ -194,6 +194,7 @@ contains
     !==============================================================================
     real(kind=dp), allocatable :: dhcore(:)
     real(kind=dp), allocatable :: hcore_bk(:)
+!    real(kind=dp), allocatable :: dens_old(:)
 
     !==============================================================================
     ! Tag Arrays for Accessing Data
@@ -328,7 +329,6 @@ contains
       if(ok/=0) call show_message('Cannot allocate memory for temporary vectors',WITH_ABORT)
     end if
     hcore_bk = hcore
-
     !==============================================================================
     ! Initialize pFON Parameters
     !==============================================================================
@@ -969,9 +969,9 @@ contains
                                 H_U_gap, modify_vshift=.false., do_print=.true.)
       select case(scf_type)
       case (scf_rhf)
-        call add_potqm_contributions(infos, dmat_a, dhcore)
+        call add_potqm_contributions(infos, pdmat(:,1), dhcore)
       case (scf_uhf,scf_rohf)
-        call add_potqm_contributions(infos, dmat_a+dmat_b, dhcore)
+        call add_potqm_contributions(infos, pdmat(:,1)+pdmat(:,2), dhcore)
       end select
       hcore  = hcore_bk + dhcore
 

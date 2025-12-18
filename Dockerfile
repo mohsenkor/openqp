@@ -47,7 +47,9 @@ ENV OPENQP_ROOT=/opt/openqp
 ENV OMP_NUM_THREADS=4
 
 # Run tests to confirm installation
-RUN openqp --run_tests all
-
+RUN set -e; \
+    openqp --run_tests all; \
+    echo "==== OpenQP test report ===="; \
+    find /opt -name test_report.txt -print -exec cat {} \;
 # Set entrypoint if required
 ENTRYPOINT ["bash"]
